@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/style-PEP8-black)](https://peps.python.org/pep-0008/)
 [![Async](https://img.shields.io/badge/async-asyncio-purple)](https://docs.python.org/3/library/asyncio.html)
-[![Tests](https://img.shields.io/badge/tests-120%20passing-brightgreen)](tests/)
+[![Tests](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml/badge.svg)](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml)
 [![Coverage](https://img.shields.io/badge/coverage-80%25-green)](tests/)
 
 </div>
