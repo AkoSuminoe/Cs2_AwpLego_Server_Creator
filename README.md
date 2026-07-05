@@ -37,6 +37,8 @@ Phase 2 goes further: every plugin install is preceded by an **atomic ZIP snapsh
 | **Plugin lock file** | Every install pinned by version, commit ref, and exact download URL |
 | **`--restore` mode** | Recreate a server's exact plugin set on any machine from `cs2-plugins.lock` |
 | **Async RCON client** | Source RCON over pure asyncio — add admins, change maps, kick/ban, broadcast |
+| **Server port config** | Custom game port injected into `start_server.bat`; router forwarding guide included |
+| **MySQL auto-binding** | `databases.json` auto-generated for CounterStrikeSharp plugin SQL connectivity |
 
 ---
 
@@ -222,6 +224,88 @@ All I/O is wrapped in `asyncio.wait_for(..., timeout)`. Authentication failure r
 
 ---
 
+## Network & Port Forwarding
+
+> **Required for public servers.** Players cannot connect if the game port is blocked by your router or Windows Firewall.
+
+### Windows Firewall Rules
+
+Run these two commands as **Administrator** to open the required ports:
+
+```cmd
+:: Game port — UDP (player traffic)
+netsh advfirewall firewall add rule name="CS2 Server UDP" protocol=UDP dir=in localport=27015 action=allow
+
+:: RCON port — TCP (remote console)
+netsh advfirewall firewall add rule name="CS2 Server TCP" protocol=TCP dir=in localport=27015 action=allow
+```
+
+Replace `27015` with your chosen port if you changed the default during setup.
+
+### Router / Port Forwarding
+
+1. Open your router admin panel — typically `192.168.1.1` or `192.168.0.1`.
+2. Navigate to **Port Forwarding** (also called **Virtual Server** or **NAT** depending on the firmware).
+3. Create two rules pointing to your server machine's **local IP address**:
+
+| Rule | Protocol | External Port | Internal Port |
+|------|----------|---------------|---------------|
+| CS2 Game | **UDP** | 27015 | 27015 |
+| CS2 RCON | **TCP** | 27015 | 27015 |
+
+4. Save and apply. Restart the router if prompted.
+5. After starting the server, verify the port is reachable using [canyouseeme.org](https://canyouseeme.org).
+
+> The port you choose during the installer prompt is injected automatically into `start_server.bat` via `-port`. No manual editing required.
+
+---
+
+## Database Integration & Plugin Binding
+
+Many CounterStrikeSharp plugins — **Ranks, VIP tiers, Stats, Bans** — require a MySQL database to persist player data across map changes and server restarts. Without a valid `databases.json`, these plugins either silently fail to load or crash with a connection error on startup.
+
+### How It Works
+
+During setup, the installer presents an optional prompt:
+
+```
+Configure MySQL database for CSSharp plugins? [y/N]:
+```
+
+If you answer `y`, the tool collects your credentials and atomically writes:
+
+```
+game/csgo/addons/counterstrikesharp/configs/databases.json
+```
+
+with the standard CSSharp connection block:
+
+```json
+{
+  "default": {
+    "Host": "127.0.0.1",
+    "Port": 3306,
+    "User": "root",
+    "Password": "your_password",
+    "Database": "cs2_server"
+  }
+}
+```
+
+Every SQL-dependent plugin that follows the CSSharp convention reads the `"default"` key at startup. No plugin-by-plugin configuration is required — one file binds all of them.
+
+### HeidiSQL / phpMyAdmin Setup
+
+1. Install [HeidiSQL](https://www.heidisql.com/) (Windows, free) or use phpMyAdmin on a VPS.
+2. Connect to your MySQL instance (default: `127.0.0.1:3306`, user `root`).
+3. Create a database matching the name you entered in the installer prompt (e.g. `cs2_server`).
+4. Start the server — each plugin creates its own tables on first load. No manual schema imports.
+5. If the database runs on a remote host, restrict port `3306` to your server's IP in your firewall rules to prevent unauthorized access.
+
+> **Skip database:** Press Enter at the prompt (default `N`) to skip. No `databases.json` is created and no DB-dependent plugin will attempt to connect.
+
+---
+
 ## Why the Hybrid Model?
 
 Most server setup guides are either:
@@ -267,8 +351,9 @@ python main.py --restore
 The tool will prompt you for:
 - Installation directory (default: `~/cs2_server`)
 - Steam GSLT token and Web API key
-- Server IP and default map
+- Server IP, **server port** (default: `27015`), and default map
 - **RCON password** (written into `start_server.bat`; used by `RCONClient`)
+- **MySQL database** (optional — generates `databases.json` for CSSharp plugin SQL binding)
 - Any CounterStrikeSharp plugins you want installed
 
 ---
@@ -369,6 +454,8 @@ Bu araç **tüm pipeline'ı otomatik ve idempotent** olarak yönetir. Bir kere �
 | **Eklenti kilit dosyası** | Her kurulum sürüm, commit ve tam URL ile `cs2-plugins.lock`'a kaydedilir |
 | **`--restore` modu** | `cs2-plugins.lock` dosyasından sunucunun birebir aynı eklenti setini herhangi bir makinede kur |
 | **Async RCON istemcisi** | Pure asyncio üzerinde Source RCON protokolü — admin ekle, harita değiştir, kick/ban, duyuru |
+| **Sunucu port yapılandırması** | Seçilen port `start_server.bat`'a `-port` ile enjekte edilir; router yönlendirme rehberi dahil |
+| **MySQL otomatik bağlama** | CounterStrikeSharp eklentileri için `databases.json` otomatik üretilir |
 
 ---
 
@@ -538,6 +625,88 @@ RCON şifresi kurulum sırasında girilen prompt'tan alınır ve `start_server.b
 
 ---
 
+## Ağ & Port Yönlendirme
+
+> **Halka açık sunucular için zorunlu.** Oyuncular, router veya Windows Güvenlik Duvarı tarafından engellenen bir porta bağlanamaz.
+
+### Windows Güvenlik Duvarı Kuralları
+
+Gerekli portları açmak için aşağıdaki komutları **Yönetici** olarak çalıştır:
+
+```cmd
+:: Oyun portu — UDP (oyuncu trafiği)
+netsh advfirewall firewall add rule name="CS2 Server UDP" protocol=UDP dir=in localport=27015 action=allow
+
+:: RCON portu — TCP (uzak konsol)
+netsh advfirewall firewall add rule name="CS2 Server TCP" protocol=TCP dir=in localport=27015 action=allow
+```
+
+Kurulum sırasında farklı bir port seçtiysen `27015` yerine o portu yaz.
+
+### Router / Port Yönlendirme
+
+1. Router yönetim panelini aç — genellikle `192.168.1.1` veya `192.168.0.1`.
+2. **Port Yönlendirme** bölümünü bul (firmware'e göre **Sanal Sunucu** veya **NAT** da denir).
+3. Sunucu makinenin **yerel IP adresi** için iki kural oluştur:
+
+| Kural | Protokol | Dış Port | İç Port |
+|-------|----------|----------|---------|
+| CS2 Oyun | **UDP** | 27015 | 27015 |
+| CS2 RCON | **TCP** | 27015 | 27015 |
+
+4. Kaydet ve uygula. Gerekirse router'ı yeniden başlat.
+5. Sunucuyu başlattıktan sonra [canyouseeme.org](https://canyouseeme.org) ile portun erişilebilir olduğunu doğrula.
+
+> Kurulum sırasında seçtiğin port, `-port` parametresiyle `start_server.bat`'a otomatik enjekte edilir. Manuel düzenleme gerekmez.
+
+---
+
+## Veritabanı Entegrasyonu & Plugin Bağlama
+
+Pek çok CounterStrikeSharp eklentisi — **Rank, VIP, Stats, Bans** — oyuncu verilerini harita değişimleri ve sunucu yeniden başlatmalarında kalıcı tutmak için bir MySQL veritabanına ihtiyaç duyar. Geçerli bir `databases.json` olmadan bu eklentiler sessizce yüklenmez veya başlarken bağlantı hatası verir.
+
+### Nasıl Çalışır?
+
+Kurulum sırasında araç isteğe bağlı bir prompt sunar:
+
+```
+Configure MySQL database for CSSharp plugins? [y/N]:
+```
+
+`y` cevabını verirsen araç veritabanı bilgilerini toplar ve atomik olarak şu dosyayı yazar:
+
+```
+game/csgo/addons/counterstrikesharp/configs/databases.json
+```
+
+CSSharp standart bağlantı bloğuyla:
+
+```json
+{
+  "default": {
+    "Host": "127.0.0.1",
+    "Port": 3306,
+    "User": "root",
+    "Password": "sifre",
+    "Database": "cs2_server"
+  }
+}
+```
+
+CSSharp konvansiyonunu takip eden her SQL bağımlı eklenti, başlangıçta `"default"` anahtarını okur. Eklenti başına ayrı yapılandırma gerekmez — tek dosya hepsini bağlar.
+
+### HeidiSQL / phpMyAdmin Kurulumu
+
+1. [HeidiSQL](https://www.heidisql.com/) (Windows, ücretsiz) veya VPS için phpMyAdmin kur.
+2. MySQL instance'ına bağlan (varsayılan: `127.0.0.1:3306`, kullanıcı `root`).
+3. Kurulum sırasında girdiğin isimle (örn. `cs2_server`) yeni bir veritabanı oluştur.
+4. Sunucuyu başlat — her eklenti ilk yüklemede kendi tablolarını oluşturur. Manuel şema içe aktarımı gerekmez.
+5. Veritabanı uzak bir sunucuda çalışıyorsa, yetkisiz erişimi önlemek için `3306` portunu yalnızca sunucu IP'sine açık bırak.
+
+> **Veritabanını atla:** Prompt'ta Enter'a bas (varsayılan `N`). `databases.json` oluşturulmaz ve hiçbir eklenti bağlantı denemez.
+
+---
+
 ## Neden Hibrit Model?
 
 Çoğu sunucu kurulum rehberi ya tamamen **shell script** (hızlı ama kırılgan) ya da tamamen **Docker** (taşınabilir ama opak). Bu araç **ön-besleme + async log okuma hibrit modelini** kullanır:
@@ -579,8 +748,9 @@ python main.py --restore
 Araç senden şunları isteyecek:
 - Kurulum dizini (varsayılan: `~/cs2_server`)
 - Steam GSLT token ve Web API anahtarı
-- Sunucu IP adresi ve varsayılan harita
+- Sunucu IP adresi, **port** (varsayılan: `27015`) ve varsayılan harita
 - **RCON şifresi** (`start_server.bat`'a yazılır; `RCONClient` tarafından kullanılır)
+- **MySQL veritabanı** (isteğe bağlı — CSSharp eklentileri için `databases.json` üretir)
 - Kurmak istediğin CounterStrikeSharp eklentileri
 
 ---

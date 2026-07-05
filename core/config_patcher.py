@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
 
-from models.schemas import ServerConfig
+from models.schemas import DatabaseConfig, ServerConfig
 
 METAMOD_GAME_ENTRY = "\t\t\tGame\tcsgo/addons/metamod\n"
 GAMEINFO_ANCHOR = "Game_LowViolence"
@@ -19,6 +21,7 @@ start /wait cs2.exe -dedicated -usercon -console ^
 +sv_setsteamaccount {gslt_token} ^
 -authkey {auth_key} ^
 -ip {server_ip} ^
+-port {server_port} ^
 +map {map} ^
 +exec server.cfg ^
 -rcon_password {rcon_password} ^
@@ -81,6 +84,7 @@ def write_server_configs(
         gslt_token=config.gslt_token,
         auth_key=config.auth_key,
         server_ip=config.server_ip,
+        server_port=config.server_port,
         map=config.map,
         rcon_password=config.rcon_password,
     )
@@ -94,3 +98,21 @@ def write_server_configs(
 
     if cfg_template_path.exists():
         shutil.copy2(cfg_template_path, cfg_dir / "server.cfg")
+
+
+def write_databases_json(csgo_dir: Path, db: DatabaseConfig) -> None:
+    configs_dir = csgo_dir / "addons" / "counterstrikesharp" / "configs"
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    target = configs_dir / "databases.json"
+    payload = {
+        "default": {
+            "Host": db.host,
+            "Port": db.port,
+            "User": db.username,
+            "Password": db.password,
+            "Database": db.database,
+        }
+    }
+    tmp = target.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(tmp, target)

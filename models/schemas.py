@@ -34,12 +34,24 @@ class ProgressEvent:
 
 
 @dataclass
+class DatabaseConfig:
+    host: str = "127.0.0.1"
+    port: int = 3306
+    username: str = "root"
+    password: str = ""
+    database: str = "cs2_server"
+    enabled: bool = False
+
+
+@dataclass
 class ServerConfig:
     gslt_token: str
     auth_key: str
     server_ip: str
     map: str = "de_dust2"
     rcon_password: str = ""
+    server_port: int = 27015
+    db_config: Optional[DatabaseConfig] = None
 
 
 @dataclass

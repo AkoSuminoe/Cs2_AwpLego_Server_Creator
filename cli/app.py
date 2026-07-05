@@ -19,7 +19,7 @@ from rich.prompt import Prompt
 from rich.table import Table
 
 from core.mod_manager import InvalidRepoReferenceError, parse_repo_string
-from models.schemas import PluginRef, ServerConfig
+from models.schemas import DatabaseConfig, PluginRef, ServerConfig
 
 console = Console()
 
@@ -68,8 +68,38 @@ def collect_server_config() -> ServerConfig:
     gslt = Prompt.ask("[bold]Steam GSLT token[/bold]", password=True, console=console)
     auth_key = Prompt.ask("[bold]Steam Web API key[/bold]", password=True, console=console)
     server_ip = Prompt.ask("[bold]Server IP address[/bold]", console=console)
+    server_port_raw = Prompt.ask("[bold]Server port[/bold]", default="27015", console=console)
+    try:
+        server_port = int(server_port_raw)
+    except ValueError:
+        server_port = 27015
     server_map = Prompt.ask("[bold]Default map[/bold]", default="de_dust2", console=console)
     rcon_password = Prompt.ask("[bold]RCON password[/bold]", password=True, console=console)
+
+    db_config: Optional[DatabaseConfig] = None
+    use_db = Prompt.ask(
+        "\n[bold]Configure MySQL database for CSSharp plugins?[/bold] [y/N]",
+        default="n",
+        console=console,
+    ).strip().lower()
+    if use_db == "y":
+        db_host = Prompt.ask("[bold]  Database host[/bold]", default="127.0.0.1", console=console)
+        db_port_raw = Prompt.ask("[bold]  Database port[/bold]", default="3306", console=console)
+        try:
+            db_port = int(db_port_raw)
+        except ValueError:
+            db_port = 3306
+        db_user = Prompt.ask("[bold]  Database username[/bold]", default="root", console=console)
+        db_pass = Prompt.ask("[bold]  Database password[/bold]", password=True, console=console)
+        db_name = Prompt.ask("[bold]  Database name[/bold]", default="cs2_server", console=console)
+        db_config = DatabaseConfig(
+            host=db_host,
+            port=db_port,
+            username=db_user,
+            password=db_pass,
+            database=db_name,
+            enabled=True,
+        )
 
     return ServerConfig(
         gslt_token=gslt,
@@ -77,6 +107,8 @@ def collect_server_config() -> ServerConfig:
         server_ip=server_ip,
         map=server_map,
         rcon_password=rcon_password,
+        server_port=server_port,
+        db_config=db_config,
     )
 
 

@@ -252,6 +252,21 @@ async def main() -> None:
                 results.append(("Server Configs", False, str(exc)))
 
             # ------------------------------------------------------------------
+            # Phase 7b: CSSharp databases.json (skipped when DB not configured)
+            # ------------------------------------------------------------------
+            if server_config.db_config and server_config.db_config.enabled:
+                try:
+                    config_patcher.write_databases_json(csgo_dir, server_config.db_config)
+                    console.print(
+                        "[green]  [+] CSSharp databases.json configured successfully "
+                        "for plugin SQL binding![/green]"
+                    )
+                    results.append(("CSSharp Database Config", True, "databases.json written"))
+                except Exception as exc:
+                    console.print(f"[red]  [-] Failed to write databases.json: {exc}[/red]")
+                    results.append(("CSSharp Database Config", False, str(exc)))
+
+            # ------------------------------------------------------------------
             # Phase 8: user-defined plugins
             # ------------------------------------------------------------------
             for plugin in plugins:
