@@ -294,9 +294,28 @@ with the standard CSSharp connection block:
 
 Every SQL-dependent plugin that follows the CSSharp convention reads the `"default"` key at startup. No plugin-by-plugin configuration is required — one file binds all of them.
 
+### XAMPP Setup (Quickest Path on Windows)
+
+If you don't already have a MySQL server, [XAMPP](https://www.apachefriends.org/download.html) bundles everything you need in one installer.
+
+1. Download and install XAMPP.
+2. Open the **XAMPP Control Panel** (`xampp-control.exe`).
+3. Click **Start** next to two services:
+   - **MySQL** — the database engine your CSSharp plugins will connect to.
+   - **Apache** — required only if you want to manage the database via **phpMyAdmin** in your browser at `http://localhost/phpmyadmin`.
+4. Both service indicators should turn green. If MySQL fails to start, port `3306` is likely already in use — stop the conflicting service (usually another MySQL install) and click Start again.
+5. Default XAMPP credentials for the installer prompt:
+   - Host: `127.0.0.1`
+   - Port: `3306`
+   - Username: `root`
+   - Password: *(leave empty — XAMPP ships with a blank root password by default)*
+   - Database: `cs2_server`
+
+> **Security note:** The blank root password is fine for local development but a serious risk if the port is exposed. Set a password via phpMyAdmin → **User accounts** → **Edit privileges** on `root@localhost` before opening `3306` to the internet.
+
 ### HeidiSQL / phpMyAdmin Setup
 
-1. Install [HeidiSQL](https://www.heidisql.com/) (Windows, free) or use phpMyAdmin on a VPS.
+1. Install [HeidiSQL](https://www.heidisql.com/) (Windows, free) or use phpMyAdmin (bundled with XAMPP, or standalone on a VPS).
 2. Connect to your MySQL instance (default: `127.0.0.1:3306`, user `root`).
 3. Create a database matching the name you entered in the installer prompt (e.g. `cs2_server`).
 4. Start the server — each plugin creates its own tables on first load. No manual schema imports.
@@ -695,9 +714,28 @@ CSSharp standart bağlantı bloğuyla:
 
 CSSharp konvansiyonunu takip eden her SQL bağımlı eklenti, başlangıçta `"default"` anahtarını okur. Eklenti başına ayrı yapılandırma gerekmez — tek dosya hepsini bağlar.
 
+### XAMPP Kurulumu (Windows'ta En Hızlı Yol)
+
+Hazır bir MySQL sunucun yoksa, [XAMPP](https://www.apachefriends.org/download.html) tek installer ile ihtiyacın olan her şeyi paketler.
+
+1. XAMPP'ı indir ve kur.
+2. **XAMPP Control Panel**'i aç (`xampp-control.exe`).
+3. İki servisin yanındaki **Start** butonuna bas:
+   - **MySQL** — CSSharp eklentilerinin bağlanacağı veritabanı motoru.
+   - **Apache** — sadece **phpMyAdmin**'i tarayıcıdan (`http://localhost/phpmyadmin`) kullanmak istersen gerekli.
+4. Her iki servisin göstergesi yeşile dönmeli. MySQL başlamıyorsa muhtemelen `3306` portu başka bir servis tarafından kullanılıyordur — çakışan servisi (genellikle başka bir MySQL kurulumu) durdurup Start'a tekrar bas.
+5. Installer prompt'unda XAMPP varsayılan bilgileri:
+   - Host: `127.0.0.1`
+   - Port: `3306`
+   - Kullanıcı adı: `root`
+   - Şifre: *(boş bırak — XAMPP varsayılan olarak boş root şifresiyle gelir)*
+   - Veritabanı: `cs2_server`
+
+> **Güvenlik notu:** Boş root şifresi lokal geliştirme için sorun değil, ancak port dışarı açıksa ciddi risk. Port `3306`'yı internete açmadan önce phpMyAdmin → **Kullanıcı hesapları** → **Yetkileri düzenle** yolundan `root@localhost` için bir şifre belirle.
+
 ### HeidiSQL / phpMyAdmin Kurulumu
 
-1. [HeidiSQL](https://www.heidisql.com/) (Windows, ücretsiz) veya VPS için phpMyAdmin kur.
+1. [HeidiSQL](https://www.heidisql.com/) (Windows, ücretsiz) veya phpMyAdmin (XAMPP ile birlikte gelir ya da VPS'de standalone) kur.
 2. MySQL instance'ına bağlan (varsayılan: `127.0.0.1:3306`, kullanıcı `root`).
 3. Kurulum sırasında girdiğin isimle (örn. `cs2_server`) yeni bir veritabanı oluştur.
 4. Sunucuyu başlat — her eklenti ilk yüklemede kendi tablolarını oluşturur. Manuel şema içe aktarımı gerekmez.
