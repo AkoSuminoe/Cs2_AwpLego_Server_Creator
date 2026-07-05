@@ -61,5 +61,12 @@ class LockFileManager:
             "schema_version": lock.schema_version,
             "entries": serialized_entries,
         }
-        self._tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        os.replace(self._tmp, self._path)
+        try:
+            self._tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(self._tmp, self._path)
+        except OSError:
+            try:
+                self._tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise

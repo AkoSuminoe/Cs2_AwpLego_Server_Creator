@@ -101,13 +101,24 @@ async def _restore_from_lock(
 
 
 async def main() -> None:
-    args = _parse_args()
+    try:
+        args = _parse_args()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        console.print(f"[red]Failed to parse arguments: {exc}[/red]")
+        return
+
     show_banner()
 
     # Phase 0 — collect all user input before any async work begins
-    base_dir = collect_base_dir()
-    server_config = collect_server_config()
-    plugins = collect_plugins()
+    try:
+        base_dir = collect_base_dir()
+        server_config = collect_server_config()
+        plugins = collect_plugins()
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Setup cancelled by user.[/yellow]")
+        return
 
     # Phase 1 — resolve canonical paths
     steamcmd_dir = base_dir / "steamcmd"
@@ -333,4 +344,11 @@ async def main() -> None:
 if __name__ == "__main__":
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted by user. Exiting.[/yellow]")
+        sys.exit(130)
+    except Exception as exc:
+        console.print(f"\n[red]Fatal error: {exc}[/red]")
+        sys.exit(1)

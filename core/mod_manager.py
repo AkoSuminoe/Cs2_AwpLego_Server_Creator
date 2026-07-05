@@ -93,10 +93,22 @@ async def resolve_latest_asset_url(
         )
     response.raise_for_status()
 
-    data = response.json()
-    version: str = data.get("tag_name", "unknown")
-    commit_ref: str = data.get("target_commitish", "")
-    assets: list[dict] = data.get("assets", [])
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise InvalidRepoReferenceError(
+            f"GitHub returned invalid JSON for '{owner}/{repo_name}': {exc}"
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise InvalidRepoReferenceError(
+            f"Unexpected GitHub response shape for '{owner}/{repo_name}'."
+        )
+
+    version: str = data.get("tag_name", "unknown") or "unknown"
+    commit_ref: str = data.get("target_commitish", "") or ""
+    assets_raw = data.get("assets", [])
+    assets: list[dict] = [a for a in assets_raw if isinstance(a, dict) and a.get("browser_download_url") and a.get("name")]
 
     if not assets:
         raise InvalidRepoReferenceError(
@@ -108,7 +120,7 @@ async def resolve_latest_asset_url(
         if matching:
             return matching[0]["browser_download_url"], version, commit_ref
 
-    zip_assets = [a for a in assets if a["name"].endswith(".zip")]
+    zip_assets = [a for a in assets if a["name"].lower().endswith(".zip")]
     if zip_assets:
         return zip_assets[0]["browser_download_url"], version, commit_ref
 
@@ -128,15 +140,30 @@ async def download_asset(
     """
     async with http_client.stream("GET", url) as response:
         response.raise_for_status()
-        total = int(response.headers.get("content-length", -1))
+        try:
+            total = int(response.headers.get("content-length", -1))
+        except (TypeError, ValueError):
+            total = -1
         downloaded = 0
 
-        with dest_path.open("wb") as fh:
-            async for chunk in response.aiter_bytes(chunk_size=65536):
-                fh.write(chunk)
-                downloaded += len(chunk)
-                if on_progress:
-                    on_progress(downloaded, total)
+        try:
+            with dest_path.open("wb") as fh:
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    fh.write(chunk)
+                    downloaded += len(chunk)
+                    if on_progress:
+                        try:
+                            on_progress(downloaded, total)
+                        except Exception:
+                            pass
+        except OSError as exc:
+            try:
+                dest_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise OSError(
+                f"Failed to write downloaded asset to {dest_path}: {exc}"
+            ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -276,10 +303,18 @@ async def install_mod(
             await download_asset(download_url, zip_path, http_client, _on_chunk)
 
             if on_progress:
-                on_progress(ProgressEvent(step=repo, percent=100.0, message="Extracting"))
+                try:
+                    on_progress(ProgressEvent(step=repo, percent=100.0, message="Extracting"))
+                except Exception:
+                    pass
 
-            with zipfile.ZipFile(zip_path) as zf:
-                namelist = zf.namelist()
+            try:
+                with zipfile.ZipFile(zip_path) as zf:
+                    namelist = zf.namelist()
+            except zipfile.BadZipFile as exc:
+                raise UnrecognizedZipStructureError(
+                    f"Downloaded asset for '{repo}' is not a valid ZIP: {exc}"
+                ) from exc
 
             case, wrapper_prefix = _classify_zip(namelist)
 
@@ -291,7 +326,12 @@ async def install_mod(
                     "or .dll files at root."
                 )
 
-            files_written = _extract_zip(zip_path, target_dir, case, wrapper_prefix)
+            try:
+                files_written = _extract_zip(zip_path, target_dir, case, wrapper_prefix)
+            except (OSError, zipfile.BadZipFile) as exc:
+                raise UnrecognizedZipStructureError(
+                    f"Failed to extract '{repo}' into {target_dir}: {exc}"
+                ) from exc
 
         return ModInstallResult(
             repo=repo,

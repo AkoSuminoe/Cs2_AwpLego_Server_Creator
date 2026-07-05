@@ -46,7 +46,11 @@ def patch_gameinfo(csgo_dir: Path) -> bool:
             "Make sure CS2 is fully installed before patching."
         )
 
-    content = gameinfo_path.read_text(encoding="utf-8")
+    try:
+        content = gameinfo_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise OSError(f"Failed to read gameinfo.gi: {exc}") from exc
+
     if METAMOD_CHECK in content:
         return False  # Already patched
 
@@ -61,7 +65,10 @@ def patch_gameinfo(csgo_dir: Path) -> bool:
             "The file may be corrupted or from an unexpected CS2 version."
         )
 
-    gameinfo_path.write_text("".join(lines), encoding="utf-8")
+    try:
+        gameinfo_path.write_text("".join(lines), encoding="utf-8")
+    except OSError as exc:
+        raise OSError(f"Failed to write gameinfo.gi: {exc}") from exc
     return True
 
 
@@ -77,7 +84,10 @@ def write_server_configs(
     Both operations are idempotent — safe to call on every run.
     """
     game_dir = server_dir / "game"
-    game_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        game_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"Cannot create game directory {game_dir}: {exc}") from exc
 
     bat_content = BAT_TEMPLATE.format(
         server_dir=str(server_dir),
@@ -88,21 +98,34 @@ def write_server_configs(
         map=config.map,
         rcon_password=config.rcon_password,
     )
-    (game_dir / "start_server.bat").write_text(bat_content, encoding="utf-8")
+    try:
+        (game_dir / "start_server.bat").write_text(bat_content, encoding="utf-8")
+    except OSError as exc:
+        raise OSError(f"Failed to write start_server.bat: {exc}") from exc
 
     cfg_dir = server_dir / "game" / "csgo" / "cfg"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"Cannot create cfg directory {cfg_dir}: {exc}") from exc
 
     if cfg_template_path is None:
         cfg_template_path = base_dir / "server.cfg"
 
     if cfg_template_path.exists():
-        shutil.copy2(cfg_template_path, cfg_dir / "server.cfg")
+        try:
+            shutil.copy2(cfg_template_path, cfg_dir / "server.cfg")
+        except (OSError, shutil.SameFileError) as exc:
+            raise OSError(f"Failed to copy server.cfg: {exc}") from exc
 
 
 def write_databases_json(csgo_dir: Path, db: DatabaseConfig) -> None:
     configs_dir = csgo_dir / "addons" / "counterstrikesharp" / "configs"
-    configs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        configs_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise OSError(f"Cannot create CSSharp configs directory: {exc}") from exc
+
     target = configs_dir / "databases.json"
     payload = {
         "default": {
@@ -114,5 +137,12 @@ def write_databases_json(csgo_dir: Path, db: DatabaseConfig) -> None:
         }
     }
     tmp = target.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp, target)
+    try:
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise OSError(f"Failed to write databases.json: {exc}") from exc

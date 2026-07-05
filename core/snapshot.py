@@ -38,7 +38,11 @@ def take_snapshot(csgo_dir: Path, snapshot_dir: Path, label: str = "") -> Snapsh
                     if file.is_file():
                         arcname = d + "/" + file.relative_to(src).as_posix()
                         zf.write(file, arcname)
-    except OSError as exc:
+    except (OSError, zipfile.BadZipFile) as exc:
+        try:
+            archive_path.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise SnapshotError(f"Failed to create snapshot archive: {exc}") from exc
 
     meta = SnapshotMeta(
@@ -117,5 +121,12 @@ def _write_meta(json_path: Path, meta: SnapshotMeta) -> None:
         "archive_path": meta.archive_path,
         "dirs_captured": meta.dirs_captured,
     }
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    os.replace(tmp, json_path)
+    try:
+        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        os.replace(tmp, json_path)
+    except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise SnapshotError(f"Failed to write snapshot metadata: {exc}") from exc

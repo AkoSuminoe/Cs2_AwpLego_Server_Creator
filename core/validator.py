@@ -48,8 +48,15 @@ class StateManager:
             "steps": state.steps,
         }
         # Atomic write: write to .tmp then rename — prevents half-written JSON
-        self._tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        os.replace(self._tmp, self._path)
+        try:
+            self._tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(self._tmp, self._path)
+        except OSError:
+            try:
+                self._tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
 
     def mark_complete(self, step: str, metadata: Optional[dict] = None) -> None:
         state = self.load()
@@ -99,7 +106,10 @@ def is_gameinfo_patched(csgo_dir: Path) -> bool:
     gameinfo = csgo_dir / "gameinfo.gi"
     if not gameinfo.exists():
         return False
-    content = gameinfo.read_text(encoding="utf-8")
+    try:
+        content = gameinfo.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
     return "csgo/addons/metamod" in content
 
 
@@ -107,4 +117,7 @@ def is_plugin_installed(plugins_dir: Path, plugin_name: str) -> bool:
     plugin_dir = plugins_dir / plugin_name
     if not plugin_dir.is_dir():
         return False
-    return any(plugin_dir.iterdir())
+    try:
+        return any(plugin_dir.iterdir())
+    except OSError:
+        return False

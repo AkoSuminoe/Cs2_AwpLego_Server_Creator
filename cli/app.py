@@ -48,7 +48,11 @@ def collect_base_dir() -> Path:
             default=default,
             console=console,
         )
-        path = Path(raw).expanduser().resolve()
+        try:
+            path = Path(raw).expanduser().resolve()
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Invalid path '{raw}': {exc}. Try another path.[/red]")
+            continue
         try:
             path.mkdir(parents=True, exist_ok=True)
             probe = path / ".write_probe"

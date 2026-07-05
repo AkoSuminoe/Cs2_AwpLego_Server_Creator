@@ -91,17 +91,26 @@ class RCONClient:
         return await self.execute(f"say {message}")
 
     async def _send(self, packet: bytes) -> None:
-        assert self._writer is not None
-        self._writer.write(packet)
-        await asyncio.wait_for(self._writer.drain(), timeout=self._timeout)
+        if self._writer is None:
+            raise RCONConnectionError("Not connected. Call connect() first.")
+        try:
+            self._writer.write(packet)
+            await asyncio.wait_for(self._writer.drain(), timeout=self._timeout)
+        except asyncio.TimeoutError as exc:
+            raise RCONConnectionError("RCON send timed out.") from exc
+        except (OSError, ConnectionError) as exc:
+            raise RCONConnectionError(f"RCON send failed: {exc}") from exc
 
     async def _recv_packet(self) -> tuple[int, int, str]:
-        assert self._reader is not None
+        if self._reader is None:
+            raise RCONConnectionError("Not connected. Call connect() first.")
         try:
             size_data = await asyncio.wait_for(
                 self._reader.readexactly(4), timeout=self._timeout
             )
             size = struct.unpack("<i", size_data)[0]
+            if size < 10 or size > 4_194_304:  # 4 MiB safety ceiling
+                raise RCONConnectionError(f"RCON returned malformed size: {size}")
             payload = await asyncio.wait_for(
                 self._reader.readexactly(size), timeout=self._timeout
             )
@@ -109,9 +118,17 @@ class RCONClient:
             raise RCONConnectionError("RCON receive timed out.") from exc
         except asyncio.IncompleteReadError as exc:
             raise RCONConnectionError("RCON connection closed unexpectedly.") from exc
+        except struct.error as exc:
+            raise RCONConnectionError(f"RCON header malformed: {exc}") from exc
+        except (OSError, ConnectionError) as exc:
+            raise RCONConnectionError(f"RCON receive failed: {exc}") from exc
 
-        packet_id = struct.unpack("<i", payload[:4])[0]
-        packet_type = struct.unpack("<i", payload[4:8])[0]
+        try:
+            packet_id = struct.unpack("<i", payload[:4])[0]
+            packet_type = struct.unpack("<i", payload[4:8])[0]
+        except struct.error as exc:
+            raise RCONConnectionError(f"RCON payload malformed: {exc}") from exc
+
         body = payload[8:].rstrip(b"\x00").decode("utf-8", errors="replace")
         return packet_id, packet_type, body
 
