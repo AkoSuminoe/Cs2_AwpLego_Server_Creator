@@ -1,0 +1,11 @@
+# HTTP client with async support — used in mod_manager.py and http_client.py
+# Replaces requests; same sync API plus AsyncClient for concurrent downloads
+httpx==0.27.0
+
+# Terminal UI — Console, Progress, Panel, Table, Prompt
+# All user-facing output lives in cli/app.py
+rich==13.7.1
+
+# Retry with exponential backoff — applied to GitHub API calls in mod_manager.py
+# Handles transient network errors and 5xx responses without crashing
+tenacity==8.3.0
