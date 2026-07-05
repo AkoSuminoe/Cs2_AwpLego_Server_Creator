@@ -124,13 +124,9 @@ class RCONClient:
             raise RCONConnectionError(f"RCON receive failed: {exc}") from exc
 
         try:
-            packet_id = struct.unpack("<i", payload[:4])[0]
-            packet_type = struct.unpack("<i", payload[4:8])[0]
+            return _parse_payload(payload)
         except struct.error as exc:
             raise RCONConnectionError(f"RCON payload malformed: {exc}") from exc
-
-        body = payload[8:].rstrip(b"\x00").decode("utf-8", errors="replace")
-        return packet_id, packet_type, body
 
     async def __aenter__(self) -> RCONClient:
         await self.connect()
@@ -144,3 +140,17 @@ def _pack_packet(packet_id: int, packet_type: int, body: str) -> bytes:
     body_bytes = body.encode("utf-8") + b"\x00\x00"
     size = 4 + 4 + len(body_bytes)
     return struct.pack("<iii", size, packet_id, packet_type) + body_bytes
+
+
+def _parse_payload(payload: bytes) -> tuple[int, int, str]:
+    """
+    Inverse of _pack_packet on the bytes AFTER the 4-byte size prefix.
+
+    Layout: [id:int32 LE][type:int32 LE][body utf-8][\\x00][\\x00]
+    """
+    if len(payload) < 8:
+        raise struct.error(f"RCON payload too short: {len(payload)} bytes")
+    packet_id = struct.unpack("<i", payload[:4])[0]
+    packet_type = struct.unpack("<i", payload[4:8])[0]
+    body = payload[8:].rstrip(b"\x00").decode("utf-8", errors="replace")
+    return packet_id, packet_type, body

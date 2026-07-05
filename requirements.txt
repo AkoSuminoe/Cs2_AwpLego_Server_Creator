@@ -9,3 +9,14 @@ rich==13.7.1
 # Retry with exponential backoff — applied to GitHub API calls in mod_manager.py
 # Handles transient network errors and 5xx responses without crashing
 tenacity==8.3.0
+
+# ----------------------------------------------------------------------------
+# Test suite — install with: pip install -r requirements.txt
+# Run tests with: pytest --cov=core --cov=models --cov-report=term-missing
+# ----------------------------------------------------------------------------
+
+# Test runner — parametrization, fixtures, tmp_path isolation
+pytest==8.2.2
+
+# Coverage plugin — reports line/branch coverage per module
+pytest-cov==5.0.0

@@ -62,7 +62,7 @@ class StateManager:
         state = self.load()
         entry: dict = {
             "status": "complete",
-            "completed_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         if metadata:
             entry.update(metadata)
@@ -74,7 +74,7 @@ class StateManager:
         state.steps[step] = {
             "status": "failed",
             "error": error,
-            "failed_at": datetime.datetime.utcnow().isoformat() + "Z",
+            "failed_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         self.save(state)
 

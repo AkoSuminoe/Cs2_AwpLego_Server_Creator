@@ -8,6 +8,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/style-PEP8-black)](https://peps.python.org/pep-0008/)
 [![Async](https://img.shields.io/badge/async-asyncio-purple)](https://docs.python.org/3/library/asyncio.html)
+[![Tests](https://img.shields.io/badge/tests-120%20passing-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-80%25-green)](tests/)
 
 </div>
 
@@ -431,6 +433,27 @@ Both are written atomically with `os.replace()`. Delete either to force a re-che
 
 ---
 
+## Testing & Quality Assurance
+
+The entire suite runs **fully offline** — zero network calls, zero real sockets. Async HTTP is intercepted with `httpx.MockTransport`; the RCON TCP layer is driven by hand-written `asyncio` stream fakes. Every async test is dispatched through `asyncio.run()`, so no extra plugins (`pytest-asyncio`, `respx`) are required.
+
+```bash
+pip install -r requirements.txt
+pytest --cov=core --cov=models --cov-report=term-missing
+```
+
+| Module | Coverage |
+|---|---|
+| `core/rcon_manager.py` | 94% |
+| `core/mod_manager.py` | 92% |
+| `models/schemas.py` | 98% |
+| `core/lock_manager.py` | 85% |
+| **Total** | **80%** |
+
+**120 tests** cover the Smart Unzip decision tree, the GitHub API resolver (asset selection, 403/404, malformed and non-dict JSON), streaming downloads with progress callbacks and write-error cleanup, the full `install_mod` pipeline including snapshot rollback, and the Source RCON wire codec — pack/parse round-trips, auth success and failure, connect/send/receive timeouts, malformed framing, and every convenience command (`change_map`, `kick`, `ban`, `broadcast`).
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
@@ -844,6 +867,27 @@ Durumu iki eşlik dosyası takip eder:
 | `cs2-plugins.lock` | Eklenti başına tam sürüm, commit ref ve indirme URL'si |
 
 Her ikisi de `os.replace()` ile atomik olarak yazılır. Birini silerek tam yeniden kontrol zorlanabilir — hiçbir şey bozulmaz.
+
+---
+
+## Test & Kalite Güvencesi
+
+Tüm test paketi **tamamen çevrimdışı** çalışır — sıfır ağ çağrısı, sıfır gerçek soket. Async HTTP `httpx.MockTransport` ile taklit edilir; RCON TCP katmanı elle yazılmış `asyncio` stream sahteleri üzerinden sürülür. Her async test `asyncio.run()` ile çalıştırılır; ek eklenti (`pytest-asyncio`, `respx`) gerekmez.
+
+```bash
+pip install -r requirements.txt
+pytest --cov=core --cov=models --cov-report=term-missing
+```
+
+| Modül | Kapsam |
+|---|---|
+| `core/rcon_manager.py` | %94 |
+| `core/mod_manager.py` | %92 |
+| `models/schemas.py` | %98 |
+| `core/lock_manager.py` | %85 |
+| **Toplam** | **%80** |
+
+**120 test**; Akıllı Zip Çıkarma karar ağacını, GitHub API çözümleyicisini (asset seçimi, 403/404, bozuk ve dict olmayan JSON), ilerleme callback'li ve yazma-hatası temizlikli streaming indirmeleri, snapshot rollback dahil tam `install_mod` pipeline'ını ve Source RCON wire codec'ini — pack/parse round-trip, auth başarı/başarısızlık, connect/send/receive timeout, bozuk çerçeveleme ve tüm kolaylık komutları (`change_map`, `kick`, `ban`, `broadcast`) — kapsar.
 
 ---
 

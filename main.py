@@ -319,7 +319,7 @@ async def main() -> None:
                             commit_ref=result.commit_ref,
                             download_url=result.download_url,
                             asset_keyword=None,
-                            installed_at=datetime.datetime.utcnow().isoformat() + "Z",
+                            installed_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
                         )
                     )
                     results.append(
