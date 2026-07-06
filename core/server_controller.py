@@ -39,22 +39,32 @@ class ServerController:
 
     def _build_launch_args(self) -> list[str]:
         # Mirrors BAT_TEMPLATE in config_patcher, plus -condebug so the engine
-        # writes console.log for the post-launch scan.
+        # writes console.log for the post-launch scan. Credential flags are
+        # appended only when a value exists — an empty value would make the
+        # engine consume the following flag as its argument.
         cfg = self._config
-        return [
+        args = [
             "-dedicated", "-usercon", "-console", "-condebug",
             "+game_type", "3", "+game_mode", "0",
             "+sv_logfile", "1", "-serverlogging",
-            "+sv_setsteamaccount", cfg.gslt_token,
-            "-authkey", cfg.auth_key,
+        ]
+        if cfg.gslt_token:
+            args += ["+sv_setsteamaccount", cfg.gslt_token]
+        if cfg.auth_key:
+            args += ["-authkey", cfg.auth_key]
+        args += [
             "-ip", cfg.server_ip,
             "-port", str(cfg.server_port),
             "+map", cfg.map,
             "+exec", "server.cfg",
-            "-rcon_password", cfg.rcon_password,
+        ]
+        if cfg.rcon_password:
+            args += ["-rcon_password", cfg.rcon_password]
+        args += [
             "+sv_kick_players_with_cooldown", "0",
             "+sv_cheats", "0",
         ]
+        return args
 
     async def start(self) -> None:
         if self.is_running:

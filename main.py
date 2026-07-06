@@ -373,13 +373,19 @@ async def main() -> None:
 
                 # Lock entry covers DIRECT-routed plugins whose files live
                 # outside plugins/<repo>; the directory probe covers the rest.
-                if lock_mgr.get(plugin.full_ref) is not None or is_plugin_installed(
-                    plugins_dir, plugin.repo
-                ):
+                locked = lock_mgr.get(plugin.full_ref) is not None
+                present = is_plugin_installed(plugins_dir, plugin.repo)
+                if locked or present:
                     prog.complete_task(key)
-                    results.append(
-                        (f"Plugin: {plugin.display_name}", True, "Already installed — skipped")
-                    )
+                    detail = "Already installed — skipped"
+                    if locked and not present:
+                        # Lock says installed but no files under plugins/ —
+                        # either DIRECT-routed content or a manual delete.
+                        detail = (
+                            "In lock file — skipped (no files under plugins/; "
+                            "run --restore to reinstall)"
+                        )
+                    results.append((f"Plugin: {plugin.display_name}", True, detail))
                     continue
 
                 snap: Optional[snapshot.SnapshotMeta] = None

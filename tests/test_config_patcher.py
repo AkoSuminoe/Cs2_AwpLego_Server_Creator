@@ -320,6 +320,34 @@ def test_write_server_configs_rejects_out_of_range_port(tmp_path: Path) -> None:
         write_server_configs(base_dir=base_dir, server_dir=server_dir, config=config)
 
 
+def test_write_server_configs_omits_empty_credential_flags(tmp_path: Path) -> None:
+    """
+    Empty credentials must remove their flags entirely: an empty value would
+    make the engine consume the next flag as the argument (e.g.
+    `+sv_setsteamaccount -authkey` silently eats -authkey).
+    """
+    base_dir = tmp_path / "base"
+    server_dir = tmp_path / "cs2_server"
+    base_dir.mkdir()
+    server_dir.mkdir()
+
+    config = ServerConfig(
+        gslt_token="",
+        auth_key="",
+        server_ip="127.0.0.1",
+        rcon_password="",
+    )
+
+    write_server_configs(base_dir=base_dir, server_dir=server_dir, config=config)
+
+    bat = (server_dir / "game" / "start_server.bat").read_text(encoding="utf-8")
+    assert "+sv_setsteamaccount" not in bat
+    assert "-authkey" not in bat
+    assert "-rcon_password" not in bat
+    assert "-port 27015" in bat, "Positional flags must survive credential omission"
+    assert "-ip 127.0.0.1" in bat
+
+
 def test_write_server_configs_bat_includes_condebug_flag(
     tmp_path: Path,
 ) -> None:

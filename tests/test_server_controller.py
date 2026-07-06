@@ -174,6 +174,33 @@ def test_start_launches_subprocess_with_expected_args(
     assert kwargs["stderr"] is asyncio.subprocess.DEVNULL
 
 
+def test_start_omits_empty_credential_args(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Empty credentials must drop their flags from the launch args — an empty
+    value would make the engine consume the following flag as its argument.
+    """
+    _make_exe(tmp_path)
+    calls: list[tuple[tuple, dict]] = []
+    _install_fake_exec(monkeypatch, _FakeProcess(), calls)
+
+    async def _run() -> None:
+        controller = ServerController(
+            tmp_path, _config(gslt_token="", auth_key="", rcon_password="")
+        )
+        await controller.start()
+
+    asyncio.run(_run())
+
+    (args, _kwargs) = calls[0]
+    assert "+sv_setsteamaccount" not in args
+    assert "-authkey" not in args
+    assert "-rcon_password" not in args
+    assert "-port" in args, "Positional flags must survive credential omission"
+
+
 def test_start_wraps_launch_oserror(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

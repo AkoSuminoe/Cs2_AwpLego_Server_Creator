@@ -35,20 +35,20 @@ def is_valid_port(port: int) -> bool:
     """True when port sits in the unprivileged, addressable range."""
     return 1024 <= port <= 65535
 
+# Credential flags are injected only when a value exists: an empty value
+# would make the engine consume the NEXT flag as the argument
+# (e.g. `+sv_setsteamaccount -authkey` silently eats -authkey).
 BAT_TEMPLATE = """\
 @echo off
 cd /d "{server_dir}\\game\\bin\\win64"
 start /wait cs2.exe -dedicated -usercon -console -condebug ^
 +game_type 3 +game_mode 0 ^
 +sv_logfile 1 -serverlogging ^
-+sv_setsteamaccount {gslt_token} ^
--authkey {auth_key} ^
--ip {server_ip} ^
+{credential_lines}-ip {server_ip} ^
 -port {server_port} ^
 +map {map} ^
 +exec server.cfg ^
--rcon_password {rcon_password} ^
-+sv_kick_players_with_cooldown 0 ^
+{rcon_line}+sv_kick_players_with_cooldown 0 ^
 +sv_cheats 0
 """
 
@@ -133,14 +133,22 @@ def write_server_configs(
     except OSError as exc:
         raise OSError(f"Cannot create game directory {game_dir}: {exc}") from exc
 
+    credential_lines = ""
+    if config.gslt_token:
+        credential_lines += f"+sv_setsteamaccount {config.gslt_token} ^\n"
+    if config.auth_key:
+        credential_lines += f"-authkey {config.auth_key} ^\n"
+    rcon_line = ""
+    if config.rcon_password:
+        rcon_line = f"-rcon_password {config.rcon_password} ^\n"
+
     bat_content = BAT_TEMPLATE.format(
         server_dir=str(server_dir),
-        gslt_token=config.gslt_token,
-        auth_key=config.auth_key,
+        credential_lines=credential_lines,
         server_ip=config.server_ip,
         server_port=config.server_port,
         map=config.map,
-        rcon_password=config.rcon_password,
+        rcon_line=rcon_line,
     )
     try:
         (game_dir / "start_server.bat").write_text(bat_content, encoding="utf-8")

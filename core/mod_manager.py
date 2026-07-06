@@ -193,7 +193,10 @@ def _classify_zip(namelist: list[str]) -> tuple[ZipCase, Optional[str]]:
         if path and not any(path.startswith(skip) for skip in _SKIP_PREFIXES)
     }
 
-    if "addons" in top_level:
+    # Case-insensitive: Windows extraction works either way, but a
+    # case-sensitive miss here would flatten "Addons/" as a wrapper folder
+    # and destroy the plugin's directory structure.
+    if any(name.lower() == "addons" for name in top_level):
         return ZipCase.DIRECT, None
 
     # A name is a real directory if at least one entry starts with "name/"
@@ -236,7 +239,7 @@ def _routes_to_addons(
         for name in namelist:
             if name.startswith(wrapper_prefix):
                 rest = name[len(wrapper_prefix):]
-                if rest and rest.split("/", 1)[0] == "addons":
+                if rest and rest.split("/", 1)[0].lower() == "addons":
                     return True
     return False
 

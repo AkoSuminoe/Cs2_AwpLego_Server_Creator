@@ -74,6 +74,19 @@ def test_classify_zip_recognizes_valid_layouts(
     )
 
 
+def test_classify_zip_treats_capitalized_addons_as_direct() -> None:
+    """
+    'Addons/' with any casing must classify as DIRECT — a case-sensitive miss
+    would flatten it as a wrapper folder and destroy the plugin structure.
+    """
+    namelist = ["Addons/", "Addons/metamod/bin.dll"]
+
+    case, prefix = _classify_zip(namelist)
+
+    assert case is ZipCase.DIRECT
+    assert prefix is None
+
+
 def test_classify_zip_flags_unrecognized_layout_as_ambiguous() -> None:
     """
     An archive that fits none of the known layouts must be classified as
@@ -773,6 +786,34 @@ def test_install_mod_wrapped_addons_layout_routes_to_direct_target(
     routed = csgo_dir / "addons" / "counterstrikesharp" / "plugins" / "MyPlugin" / "MyPlugin.dll"
     assert routed.exists(), "Wrapped addons/ content was not redirected to csgo_dir"
     assert result.zip_case is ZipCase.WRAPPER_FLATTEN
+
+
+def test_install_mod_capitalized_wrapped_addons_routes_to_direct_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrapper containing 'Addons/' (capital A) must still route to csgo_dir."""
+    source_zip = tmp_path / "wrapped_caps.zip"
+    with zipfile.ZipFile(source_zip, "w") as zf:
+        zf.writestr("MyPlugin-v1/Addons/counterstrikesharp/plugins/MyPlugin/x.dll", b"dll")
+
+    _patch_pipeline(monkeypatch, source_zip)
+    csgo_dir = tmp_path / "csgo"
+    plugin_target = tmp_path / "plugins" / "repo"
+
+    async def _invoke() -> Any:
+        return await install_mod(
+            repo="owner/repo",
+            target_dir=plugin_target,
+            http_client=object(),  # type: ignore[arg-type]
+            direct_target_dir=csgo_dir,
+        )
+
+    result = asyncio.run(_invoke())
+
+    routed = csgo_dir / "Addons" / "counterstrikesharp" / "plugins" / "MyPlugin" / "x.dll"
+    assert routed.exists(), "Capitalized Addons/ content was not redirected to csgo_dir"
+    assert result.target_dir == str(csgo_dir)
 
 
 def test_install_mod_flat_dll_stays_in_plugin_target(
