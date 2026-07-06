@@ -702,3 +702,127 @@ def test_install_mod_builds_and_closes_client_when_none(
 
     assert result.zip_case is ZipCase.DIRECT
     assert fake_client.closed is True, "Auto-created client was not closed"
+
+
+# ---------------------------------------------------------------------------
+# install_mod — DIRECT-layout routing to csgo_dir (regression for the
+# plugins/<repo>/addons/ double-nesting bug)
+# ---------------------------------------------------------------------------
+
+def test_install_mod_direct_layout_routes_to_direct_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A plugin release shipping addons/ at the archive root must land in
+    csgo_dir — nesting it under plugins/<repo>/addons/ makes the engine
+    silently ignore the plugin.
+    """
+    source_zip = tmp_path / "direct_plugin.zip"
+    with zipfile.ZipFile(source_zip, "w") as zf:
+        zf.writestr("addons/counterstrikesharp/plugins/MyPlugin/MyPlugin.dll", b"dll")
+
+    _patch_pipeline(monkeypatch, source_zip)
+    csgo_dir = tmp_path / "csgo"
+    plugin_target = tmp_path / "plugins" / "repo"
+
+    async def _invoke() -> Any:
+        return await install_mod(
+            repo="owner/repo",
+            target_dir=plugin_target,
+            http_client=object(),  # type: ignore[arg-type]
+            direct_target_dir=csgo_dir,
+        )
+
+    result = asyncio.run(_invoke())
+
+    routed = csgo_dir / "addons" / "counterstrikesharp" / "plugins" / "MyPlugin" / "MyPlugin.dll"
+    assert routed.exists(), "DIRECT content was not redirected to csgo_dir"
+    assert not (plugin_target / "addons").exists(), (
+        "DIRECT content was double-nested under the per-plugin target"
+    )
+    assert result.target_dir == str(csgo_dir)
+
+
+def test_install_mod_wrapped_addons_layout_routes_to_direct_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single wrapper folder containing addons/ must flatten into csgo_dir."""
+    source_zip = tmp_path / "wrapped_direct.zip"
+    with zipfile.ZipFile(source_zip, "w") as zf:
+        zf.writestr(
+            "MyPlugin-v2.0/addons/counterstrikesharp/plugins/MyPlugin/MyPlugin.dll",
+            b"dll",
+        )
+
+    _patch_pipeline(monkeypatch, source_zip)
+    csgo_dir = tmp_path / "csgo"
+    plugin_target = tmp_path / "plugins" / "repo"
+
+    async def _invoke() -> Any:
+        return await install_mod(
+            repo="owner/repo",
+            target_dir=plugin_target,
+            http_client=object(),  # type: ignore[arg-type]
+            direct_target_dir=csgo_dir,
+        )
+
+    result = asyncio.run(_invoke())
+
+    routed = csgo_dir / "addons" / "counterstrikesharp" / "plugins" / "MyPlugin" / "MyPlugin.dll"
+    assert routed.exists(), "Wrapped addons/ content was not redirected to csgo_dir"
+    assert result.zip_case is ZipCase.WRAPPER_FLATTEN
+
+
+def test_install_mod_flat_dll_stays_in_plugin_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bare-DLL archives belong in the per-plugin folder, never in csgo_dir."""
+    source_zip = tmp_path / "flat.zip"
+    with zipfile.ZipFile(source_zip, "w") as zf:
+        zf.writestr("MyPlugin.dll", b"dll")
+
+    _patch_pipeline(monkeypatch, source_zip)
+    csgo_dir = tmp_path / "csgo"
+    plugin_target = tmp_path / "plugins" / "repo"
+
+    async def _invoke() -> Any:
+        return await install_mod(
+            repo="owner/repo",
+            target_dir=plugin_target,
+            http_client=object(),  # type: ignore[arg-type]
+            direct_target_dir=csgo_dir,
+        )
+
+    result = asyncio.run(_invoke())
+
+    assert (plugin_target / "MyPlugin.dll").exists()
+    assert not csgo_dir.exists(), "FLAT_DLL content leaked into csgo_dir"
+    assert result.zip_case is ZipCase.FLAT_DLL
+
+
+def test_install_mod_without_direct_target_keeps_legacy_behavior(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Callers that never pass direct_target_dir see the original extraction path."""
+    source_zip = tmp_path / "direct.zip"
+    with zipfile.ZipFile(source_zip, "w") as zf:
+        zf.writestr("addons/metamod/metaplugins.ini", b"config")
+
+    _patch_pipeline(monkeypatch, source_zip)
+    target = tmp_path / "target"
+
+    async def _invoke() -> Any:
+        return await install_mod(
+            repo="owner/repo",
+            target_dir=target,
+            http_client=object(),  # type: ignore[arg-type]
+        )
+
+    result = asyncio.run(_invoke())
+
+    assert (target / "addons" / "metamod" / "metaplugins.ini").exists()
+    assert result.target_dir == str(target)

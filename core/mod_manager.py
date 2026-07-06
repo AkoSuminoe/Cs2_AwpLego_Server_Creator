@@ -217,6 +217,30 @@ def _classify_zip(namelist: list[str]) -> tuple[ZipCase, Optional[str]]:
     return ZipCase.AMBIGUOUS, None
 
 
+def _routes_to_addons(
+    namelist: list[str],
+    case: ZipCase,
+    wrapper_prefix: Optional[str],
+) -> bool:
+    """
+    True when the archive's effective content root is an addons/ tree.
+
+    Such content must land in csgo_dir regardless of the per-plugin target
+    directory — otherwise it nests under plugins/<repo>/addons/ and the
+    engine never loads it. Covers both DIRECT archives and WRAPPER_FLATTEN
+    archives whose single wrapper folder contains addons/.
+    """
+    if case == ZipCase.DIRECT:
+        return True
+    if case == ZipCase.WRAPPER_FLATTEN and wrapper_prefix:
+        for name in namelist:
+            if name.startswith(wrapper_prefix):
+                rest = name[len(wrapper_prefix):]
+                if rest and rest.split("/", 1)[0] == "addons":
+                    return True
+    return False
+
+
 def _extract_zip(
     zip_path: Path,
     target_dir: Path,
@@ -271,6 +295,7 @@ async def install_mod(
     asset_keyword: Optional[str] = None,
     http_client: Optional[httpx.AsyncClient] = None,
     on_progress: Optional[Callable[[ProgressEvent], None]] = None,
+    direct_target_dir: Optional[Path] = None,
 ) -> ModInstallResult:
     """
     Full pipeline for one mod installation:
@@ -281,6 +306,9 @@ async def install_mod(
       5. Clean up temp directory (always, via context manager)
 
     If http_client is None, a new one is created and closed on exit.
+    When direct_target_dir is given, archives whose effective content root
+    is addons/ are extracted there instead of target_dir — the redirect
+    that keeps DIRECT-layout plugin releases loadable by the engine.
     """
     _close_client = False
     if http_client is None:
@@ -326,11 +354,15 @@ async def install_mod(
                     "or .dll files at root."
                 )
 
+            dest_dir = target_dir
+            if direct_target_dir is not None and _routes_to_addons(namelist, case, wrapper_prefix):
+                dest_dir = direct_target_dir
+
             try:
-                files_written = _extract_zip(zip_path, target_dir, case, wrapper_prefix)
+                files_written = _extract_zip(zip_path, dest_dir, case, wrapper_prefix)
             except (OSError, zipfile.BadZipFile) as exc:
                 raise UnrecognizedZipStructureError(
-                    f"Failed to extract '{repo}' into {target_dir}: {exc}"
+                    f"Failed to extract '{repo}' into {dest_dir}: {exc}"
                 ) from exc
 
         return ModInstallResult(
@@ -338,7 +370,7 @@ async def install_mod(
             version=version,
             zip_case=case,
             files_written=files_written,
-            target_dir=str(target_dir),
+            target_dir=str(dest_dir),
             download_url=download_url,
             commit_ref=commit_ref,
         )

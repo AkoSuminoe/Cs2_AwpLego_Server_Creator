@@ -114,10 +114,20 @@ def is_gameinfo_patched(csgo_dir: Path) -> bool:
 
 
 def is_plugin_installed(plugins_dir: Path, plugin_name: str) -> bool:
-    plugin_dir = plugins_dir / plugin_name
-    if not plugin_dir.is_dir():
-        return False
+    """
+    True when the plugin owns a non-empty directory under plugins/.
+
+    Matches case-insensitively: DIRECT-layout archives ship their own folder
+    name inside addons/counterstrikesharp/plugins/, and its casing frequently
+    differs from the GitHub repo slug the user typed.
+    """
     try:
-        return any(plugin_dir.iterdir())
+        if not plugins_dir.is_dir():
+            return False
+        wanted = plugin_name.lower()
+        for child in plugins_dir.iterdir():
+            if child.is_dir() and child.name.lower() == wanted and any(child.iterdir()):
+                return True
     except OSError:
         return False
+    return False

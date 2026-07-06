@@ -42,10 +42,19 @@ from utils.http_client import build_async_client
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="CS2 Automated Server Setup & Management")
-    p.add_argument(
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
         "--restore",
         action="store_true",
         help="Reinstall all plugins from cs2-plugins.lock at their pinned versions",
+    )
+    mode.add_argument(
+        "--update",
+        action="store_true",
+        help=(
+            "Update an existing CS2 server via SteamCMD and re-apply the "
+            "gameinfo.gi Metamod patch that Steam updates overwrite"
+        ),
     )
     p.add_argument(
         "--verify",
@@ -60,6 +69,7 @@ def _parse_args() -> argparse.Namespace:
 
 async def _restore_from_lock(
     plugins_dir: Path,
+    csgo_dir: Path,
     lock_mgr: LockFileManager,
     client,
     prog: InstallationProgress,
@@ -97,7 +107,11 @@ async def _restore_from_lock(
                         f"Cannot determine ZIP layout for '{entry.owner}/{entry.repo}'."
                     )
 
+                # Same routing rule as install_mod: addons/-rooted content
+                # belongs in csgo_dir, never nested under plugins/<repo>/.
                 target_dir = plugins_dir / entry.repo
+                if mod_manager._routes_to_addons(namelist, case, prefix):
+                    target_dir = csgo_dir
                 mod_manager._extract_zip(zip_path, target_dir, case, prefix)
 
             prog.complete_task(key)
@@ -119,6 +133,66 @@ async def main() -> None:
         return
 
     show_banner()
+
+    # ----------------------------------------------------------------------
+    # --update mode: refresh CS2 via SteamCMD, then re-apply the Metamod
+    # hook that every Steam update silently wipes from gameinfo.gi.
+    # ----------------------------------------------------------------------
+    if args.update:
+        try:
+            base_dir = collect_base_dir()
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Update cancelled by user.[/yellow]")
+            return
+
+        steamcmd_dir = base_dir / "steamcmd"
+        server_dir = base_dir / "cs2_server"
+        csgo_dir = server_dir / "game" / "csgo"
+        state = StateManager(base_dir / "install_state.json")
+        results: list[tuple[str, bool, str]] = []
+
+        if not is_cs2_installed(server_dir):
+            console.print(
+                f"[red]No CS2 install found under {server_dir} — "
+                "run the installer without --update first.[/red]"
+            )
+            return
+
+        with InstallationProgress() as prog:
+            prog.start_task("update", "Update CS2 Server", total=100.0)
+            try:
+                steamcmd_wrapper.ensure_disk_space(server_dir)
+                if not is_steamcmd_installed(steamcmd_dir):
+                    await steamcmd_wrapper.download_steamcmd(steamcmd_dir)
+                async for event in steamcmd_wrapper.install_cs2(
+                    steamcmd_dir / "steamcmd.exe", server_dir
+                ):
+                    prog.update_task("update", event.percent)
+                prog.complete_task("update")
+                state.mark_complete("cs2_updated")
+                results.append(("CS2 Update", True, "Updated & validated"))
+            except Exception as exc:
+                prog.fail_task("update", str(exc))
+                results.append(("CS2 Update", False, str(exc)))
+                show_summary(results)
+                return
+
+            prog.start_task("gameinfo", "Re-patch gameinfo.gi")
+            if is_gameinfo_patched(csgo_dir):
+                prog.complete_task("gameinfo")
+                results.append(("gameinfo.gi Patch", True, "Survived update — intact"))
+            else:
+                try:
+                    config_patcher.patch_gameinfo(csgo_dir)
+                    prog.complete_task("gameinfo")
+                    state.mark_complete("gameinfo_patched")
+                    results.append(("gameinfo.gi Patch", True, "Re-applied after update"))
+                except Exception as exc:
+                    prog.fail_task("gameinfo", str(exc))
+                    results.append(("gameinfo.gi Patch", False, str(exc)))
+
+        show_summary(results)
+        return
 
     # Phase 0 — collect all user input before any async work begins
     try:
@@ -148,7 +222,9 @@ async def main() -> None:
             # --restore mode: skip installer, reinstall pinned plugins and exit
             # ------------------------------------------------------------------
             if args.restore:
-                results = await _restore_from_lock(plugins_dir, lock_mgr, client, prog)
+                results = await _restore_from_lock(
+                    plugins_dir, csgo_dir, lock_mgr, client, prog
+                )
                 show_summary(results)
                 return
 
@@ -180,6 +256,7 @@ async def main() -> None:
                 results.append(("CS2 Server", True, "Already installed — skipped"))
             else:
                 try:
+                    steamcmd_wrapper.ensure_disk_space(server_dir)
                     steamcmd_exe = steamcmd_dir / "steamcmd.exe"
                     async for event in steamcmd_wrapper.install_cs2(steamcmd_exe, server_dir):
                         prog.update_task("cs2", event.percent)
@@ -294,7 +371,11 @@ async def main() -> None:
                 key = f"plugin_{plugin.repo}"
                 prog.start_task(key, f"Plugin: {plugin.display_name}")
 
-                if is_plugin_installed(plugins_dir, plugin.repo):
+                # Lock entry covers DIRECT-routed plugins whose files live
+                # outside plugins/<repo>; the directory probe covers the rest.
+                if lock_mgr.get(plugin.full_ref) is not None or is_plugin_installed(
+                    plugins_dir, plugin.repo
+                ):
                     prog.complete_task(key)
                     results.append(
                         (f"Plugin: {plugin.display_name}", True, "Already installed — skipped")
@@ -316,6 +397,7 @@ async def main() -> None:
                         target_dir=plugins_dir / plugin.repo,
                         http_client=client,
                         on_progress=lambda e, k=key: prog.update_task(k, e.percent),
+                        direct_target_dir=csgo_dir,
                     )
 
                     if effective_verify and is_cs2_installed(server_dir):

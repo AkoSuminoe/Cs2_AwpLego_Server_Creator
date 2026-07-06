@@ -8,6 +8,9 @@ import pytest
 
 from core.config_patcher import (
     METAMOD_CHECK,
+    is_safe_batch_value,
+    is_valid_gslt,
+    is_valid_port,
     patch_gameinfo,
     write_databases_json,
     write_server_configs,
@@ -227,6 +230,94 @@ def test_write_server_configs_interpolates_every_parameter(
         "rc0n_pass",
     ):
         assert expected in bat, f"BAT missing expected parameter: {expected}"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("cleanPass123", True),
+        ("de_dust2", True),
+        ("has space", False),
+        ("amp&ersand", False),
+        ("pipe|char", False),
+        ("redirect>out", False),
+        ("caret^escape", False),
+        ("percent%var", False),
+        ("bang!delayed", False),
+        ('quo"te', False),
+    ],
+    ids=[
+        "alnum_ok", "map_name_ok", "space", "ampersand", "pipe",
+        "redirect", "caret", "percent", "bang", "quote",
+    ],
+)
+def test_is_safe_batch_value_classification(value: str, expected: bool) -> None:
+    """cmd.exe metacharacters and whitespace must be rejected; plain values pass."""
+    assert is_safe_batch_value(value) is expected
+
+
+@pytest.mark.parametrize(
+    ("token", "expected"),
+    [
+        ("A1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D6", True),
+        ("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6", True),
+        ("  A1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D6  ", True),
+        ("A1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D", False),
+        ("G1B2C3D4E5F6A7B8C9D0E1F2A3B4C5D6", False),
+        ("", False),
+    ],
+    ids=["upper_hex", "lower_hex", "stripped", "too_short", "non_hex", "empty"],
+)
+def test_is_valid_gslt_format(token: str, expected: bool) -> None:
+    """A GSLT is exactly 32 hex characters, surrounding whitespace ignored."""
+    assert is_valid_gslt(token) is expected
+
+
+@pytest.mark.parametrize(
+    ("port", "expected"),
+    [(1024, True), (27015, True), (65535, True), (1023, False), (65536, False), (0, False)],
+    ids=["lower_bound", "default", "upper_bound", "below_range", "above_range", "zero"],
+)
+def test_is_valid_port_range(port: int, expected: bool) -> None:
+    """Only the unprivileged addressable range must be accepted."""
+    assert is_valid_port(port) is expected
+
+
+def test_write_server_configs_rejects_unsafe_rcon_password(tmp_path: Path) -> None:
+    """A password that would break cmd parsing must fail before any file is written."""
+    base_dir = tmp_path / "base"
+    server_dir = tmp_path / "cs2_server"
+    base_dir.mkdir()
+    server_dir.mkdir()
+
+    config = ServerConfig(
+        gslt_token="t",
+        auth_key="a",
+        server_ip="127.0.0.1",
+        rcon_password="bad pass&word",
+    )
+
+    with pytest.raises(ValueError, match="rcon_password"):
+        write_server_configs(base_dir=base_dir, server_dir=server_dir, config=config)
+    assert not (server_dir / "game" / "start_server.bat").exists()
+
+
+def test_write_server_configs_rejects_out_of_range_port(tmp_path: Path) -> None:
+    """A privileged or impossible port must be refused at generation time."""
+    base_dir = tmp_path / "base"
+    server_dir = tmp_path / "cs2_server"
+    base_dir.mkdir()
+    server_dir.mkdir()
+
+    config = ServerConfig(
+        gslt_token="t",
+        auth_key="a",
+        server_ip="127.0.0.1",
+        server_port=80,
+    )
+
+    with pytest.raises(ValueError, match="port"):
+        write_server_configs(base_dir=base_dir, server_dir=server_dir, config=config)
 
 
 def test_write_server_configs_bat_includes_condebug_flag(

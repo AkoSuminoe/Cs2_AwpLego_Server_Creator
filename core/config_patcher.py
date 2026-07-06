@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,28 @@ from models.schemas import DatabaseConfig, ServerConfig
 METAMOD_GAME_ENTRY = "\t\t\tGame\tcsgo/addons/metamod\n"
 GAMEINFO_ANCHOR = "Game_LowViolence"
 METAMOD_CHECK = "csgo/addons/metamod"
+
+# cmd.exe metacharacters plus whitespace — any of these inside an unquoted
+# BAT_TEMPLATE field either splits the argument or hijacks the command line.
+_BAT_UNSAFE_RE = re.compile(r'[&|<>^%!"\s]')
+
+# Valve GSLT tokens are exactly 32 hex characters.
+_GSLT_RE = re.compile(r"[0-9A-Fa-f]{32}\Z")
+
+
+def is_safe_batch_value(value: str) -> bool:
+    """True when value can be embedded in start_server.bat without breaking cmd parsing."""
+    return not _BAT_UNSAFE_RE.search(value)
+
+
+def is_valid_gslt(token: str) -> bool:
+    """True when token matches Valve's 32-hex GSLT format."""
+    return bool(_GSLT_RE.fullmatch(token.strip()))
+
+
+def is_valid_port(port: int) -> bool:
+    """True when port sits in the unprivileged, addressable range."""
+    return 1024 <= port <= 65535
 
 BAT_TEMPLATE = """\
 @echo off
@@ -83,6 +106,27 @@ def write_server_configs(
 
     Both operations are idempotent — safe to call on every run.
     """
+    unsafe = [
+        name
+        for name, value in (
+            ("gslt_token", config.gslt_token),
+            ("auth_key", config.auth_key),
+            ("server_ip", config.server_ip),
+            ("map", config.map),
+            ("rcon_password", config.rcon_password),
+        )
+        if value and not is_safe_batch_value(value)
+    ]
+    if unsafe:
+        raise ValueError(
+            "Values contain characters unsafe for start_server.bat "
+            f"(whitespace or cmd metacharacters): {', '.join(unsafe)}"
+        )
+    if not is_valid_port(config.server_port):
+        raise ValueError(
+            f"Server port out of range (1024-65535): {config.server_port}"
+        )
+
     game_dir = server_dir / "game"
     try:
         game_dir.mkdir(parents=True, exist_ok=True)

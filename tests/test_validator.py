@@ -9,6 +9,7 @@ from core.validator import (
     is_cs2_installed,
     is_cssharp_installed,
     is_metamod_installed,
+    is_plugin_installed,
     is_steamcmd_installed,
 )
 
@@ -16,6 +17,26 @@ from core.validator import (
 # ---------------------------------------------------------------------------
 # Filesystem predicates
 # ---------------------------------------------------------------------------
+
+def test_is_plugin_installed_matches_case_insensitively(tmp_path: Path) -> None:
+    """
+    DIRECT-layout archives ship their own folder casing, which rarely matches
+    the repo slug the user typed — the probe must not care about case.
+    """
+    plugin_dir = tmp_path / "MyPlugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "MyPlugin.dll").write_bytes(b"dll")
+
+    assert is_plugin_installed(tmp_path, "myplugin") is True
+    assert is_plugin_installed(tmp_path, "MYPLUGIN") is True
+
+
+def test_is_plugin_installed_false_for_empty_or_missing_dirs(tmp_path: Path) -> None:
+    """An empty plugin folder or an absent plugins dir must both read as not installed."""
+    (tmp_path / "EmptyPlugin").mkdir()
+
+    assert is_plugin_installed(tmp_path, "EmptyPlugin") is False
+    assert is_plugin_installed(tmp_path / "missing", "AnyPlugin") is False
 
 def test_is_steamcmd_installed_true_when_exe_exists(tmp_path: Path) -> None:
     (tmp_path / "steamcmd.exe").write_bytes(b"MZ\x00\x00")

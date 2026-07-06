@@ -18,6 +18,7 @@ from rich.progress import (
 from rich.prompt import Prompt
 from rich.table import Table
 
+from core.config_patcher import is_safe_batch_value, is_valid_gslt, is_valid_port
 from core.mod_manager import InvalidRepoReferenceError, parse_repo_string
 from models.schemas import DatabaseConfig, PluginRef, ServerConfig
 
@@ -69,16 +70,55 @@ def collect_server_config() -> ServerConfig:
         "[dim]GSLT: steamcommunity.com/dev/managegameservers\n"
         "Auth key: steamcommunity.com/dev/apikey[/dim]\n"
     )
-    gslt = Prompt.ask("[bold]Steam GSLT token[/bold]", password=True, console=console)
-    auth_key = Prompt.ask("[bold]Steam Web API key[/bold]", password=True, console=console)
-    server_ip = Prompt.ask("[bold]Server IP address[/bold]", console=console)
-    server_port_raw = Prompt.ask("[bold]Server port[/bold]", default="27015", console=console)
-    try:
-        server_port = int(server_port_raw)
-    except ValueError:
-        server_port = 27015
-    server_map = Prompt.ask("[bold]Default map[/bold]", default="de_dust2", console=console)
-    rcon_password = Prompt.ask("[bold]RCON password[/bold]", password=True, console=console)
+    while True:
+        gslt = Prompt.ask("[bold]Steam GSLT token[/bold]", password=True, console=console).strip()
+        if not gslt:
+            console.print(
+                "[yellow]No GSLT — the server will run LAN-only and won't be "
+                "publicly listable.[/yellow]"
+            )
+            break
+        if is_valid_gslt(gslt):
+            break
+        console.print("[red]A GSLT is exactly 32 hex characters. Check the token and retry.[/red]")
+
+    while True:
+        auth_key = Prompt.ask("[bold]Steam Web API key[/bold]", password=True, console=console).strip()
+        if is_safe_batch_value(auth_key):
+            break
+        console.print("[red]The key contains characters that would break start_server.bat.[/red]")
+
+    while True:
+        server_ip = Prompt.ask("[bold]Server IP address[/bold]", console=console).strip()
+        if server_ip and is_safe_batch_value(server_ip):
+            break
+        console.print("[red]Enter an IP address without spaces or cmd metacharacters.[/red]")
+
+    while True:
+        server_port_raw = Prompt.ask("[bold]Server port[/bold]", default="27015", console=console)
+        try:
+            server_port = int(server_port_raw)
+        except ValueError:
+            console.print("[red]Port must be a number.[/red]")
+            continue
+        if is_valid_port(server_port):
+            break
+        console.print("[red]Port must be between 1024 and 65535.[/red]")
+
+    while True:
+        server_map = Prompt.ask("[bold]Default map[/bold]", default="de_dust2", console=console).strip()
+        if server_map and is_safe_batch_value(server_map):
+            break
+        console.print("[red]Map names cannot contain spaces or cmd metacharacters.[/red]")
+
+    while True:
+        rcon_password = Prompt.ask("[bold]RCON password[/bold]", password=True, console=console)
+        if is_safe_batch_value(rcon_password):
+            break
+        console.print(
+            "[red]The password would break start_server.bat — avoid spaces "
+            'and the characters & | < > ^ % ! ".[/red]'
+        )
 
     db_config: Optional[DatabaseConfig] = None
     use_db = Prompt.ask(

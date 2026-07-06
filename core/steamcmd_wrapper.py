@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 import urllib.error
 import urllib.request
 import zipfile
@@ -12,6 +13,15 @@ from models.schemas import SteamCMDEvent, SteamCMDPhase
 
 STEAMCMD_URL = "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip"
 CS2_APP_ID = "730"
+
+# A full CS2 dedicated server occupies roughly 33 GB on disk; require a
+# little headroom so the install doesn't die at the commit phase.
+REQUIRED_DISK_BYTES = 35 * 1024**3
+
+# SteamCMD's first run performs a self-update and, on Windows, frequently
+# exits with these codes even though the update succeeded — one clean
+# relaunch resumes the app_update where it left off.
+_RETRYABLE_EXIT_CODES = {6, 7}
 
 # Matches lines like:
 #   Update state (0x61) downloading, progress: 47.89 (3232478 / 6750000)
@@ -28,6 +38,34 @@ _PHASE_MAP: dict[str, SteamCMDPhase] = {
 
 class SteamCMDInstallError(Exception):
     """Raised when SteamCMD exits with a non-zero return code."""
+
+
+def ensure_disk_space(target: Path, required_bytes: int = REQUIRED_DISK_BYTES) -> None:
+    """
+    Pre-flight check: raises SteamCMDInstallError when the volume holding
+    `target` has less free space than required. Climbs to the nearest
+    existing ancestor so the check works before the directory is created.
+    """
+    probe = target
+    while not probe.exists():
+        parent = probe.parent
+        if parent == probe:
+            break
+        probe = parent
+
+    try:
+        free = shutil.disk_usage(probe).free
+    except OSError as exc:
+        raise SteamCMDInstallError(
+            f"Cannot determine free disk space for {target}: {exc}"
+        ) from exc
+
+    if free < required_bytes:
+        raise SteamCMDInstallError(
+            f"Insufficient disk space for CS2 at {target}: "
+            f"{free / 1024**3:.1f} GB free, "
+            f"{required_bytes / 1024**3:.0f} GB required."
+        )
 
 
 async def download_steamcmd(steamcmd_dir: Path) -> None:
@@ -96,45 +134,52 @@ async def install_cs2(
             f"Cannot create server directory {server_dir}: {exc}"
         ) from exc
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            str(steamcmd_exe),
-            "+force_install_dir", str(server_dir),
-            "+login", "anonymous",
-            "+app_update", CS2_APP_ID, "validate",
-            "+quit",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,  # merge stderr so nothing is lost
-        )
-    except (FileNotFoundError, PermissionError, OSError) as exc:
-        raise SteamCMDInstallError(
-            f"Failed to launch SteamCMD: {exc}"
-        ) from exc
+    for attempt in (0, 1):
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                str(steamcmd_exe),
+                "+force_install_dir", str(server_dir),
+                "+login", "anonymous",
+                "+app_update", CS2_APP_ID, "validate",
+                "+quit",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,  # merge stderr so nothing is lost
+            )
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            raise SteamCMDInstallError(
+                f"Failed to launch SteamCMD: {exc}"
+            ) from exc
 
-    assert proc.stdout is not None  # guaranteed by PIPE
+        assert proc.stdout is not None  # guaranteed by PIPE
 
-    try:
-        async for raw_line in proc.stdout:
-            decoded = raw_line.decode("utf-8", errors="replace").rstrip()
-            m = PROGRESS_RE.search(decoded)
-            if m:
-                try:
-                    pct = float(m.group("pct"))
-                except (ValueError, TypeError):
-                    continue
-                yield SteamCMDEvent(
-                    phase=_classify_phase(m.group("state")),
-                    percent=pct,
-                    raw_line=decoded,
-                )
-    except asyncio.CancelledError:
-        proc.terminate()
+        try:
+            async for raw_line in proc.stdout:
+                decoded = raw_line.decode("utf-8", errors="replace").rstrip()
+                m = PROGRESS_RE.search(decoded)
+                if m:
+                    try:
+                        pct = float(m.group("pct"))
+                    except (ValueError, TypeError):
+                        continue
+                    yield SteamCMDEvent(
+                        phase=_classify_phase(m.group("state")),
+                        percent=pct,
+                        raw_line=decoded,
+                    )
+        except asyncio.CancelledError:
+            proc.terminate()
+            await proc.wait()
+            raise
+
         await proc.wait()
-        raise
 
-    await proc.wait()
+        if proc.returncode == 0:
+            return
 
-    if proc.returncode != 0:
+        if attempt == 0 and proc.returncode in _RETRYABLE_EXIT_CODES:
+            # Self-update restart signal — relaunch once, app_update resumes.
+            continue
+
         raise SteamCMDInstallError(
             f"SteamCMD exited with code {proc.returncode}. "
             "Check your internet connection or Steam's status and try again."
