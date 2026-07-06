@@ -468,7 +468,7 @@ Both are written atomically with `os.replace()`. Delete either to force a re-che
 
 ## Testing & Quality Assurance
 
-The entire suite runs **fully offline** — zero network calls, zero real sockets. Async HTTP is intercepted with `httpx.MockTransport`; the RCON TCP layer is driven by hand-written `asyncio` stream fakes. Every async test is dispatched through `asyncio.run()`, so no extra plugins (`pytest-asyncio`, `respx`) are required.
+The entire suite runs **fully offline** — zero network calls, zero real sockets, zero real processes. Async HTTP is intercepted with `httpx.MockTransport`; the RCON TCP layer is driven by hand-written `asyncio` stream fakes; the server process lifecycle is exercised against a scripted subprocess double, so even the terminate/kill escalation ladder is tested without ever launching a binary. Every async test is dispatched through `asyncio.run()`, so no extra plugins (`pytest-asyncio`, `respx`) are required — and the whole suite finishes in well under a second.
 
 ```bash
 pip install -r requirements.txt
@@ -477,13 +477,15 @@ pytest --cov=core --cov=models --cov-report=term-missing
 
 | Module | Coverage |
 |---|---|
-| `core/rcon_manager.py` | 94% |
-| `core/mod_manager.py` | 92% |
 | `models/schemas.py` | 98% |
+| `core/rcon_manager.py` | 94% |
+| `core/log_validator.py` | 94% |
+| `core/server_controller.py` | 94% |
+| `core/mod_manager.py` | 92% |
 | `core/lock_manager.py` | 85% |
-| **Total** | **80%** |
+| **Total** | **83%** |
 
-**120 tests** cover the Smart Unzip decision tree, the GitHub API resolver (asset selection, 403/404, malformed and non-dict JSON), streaming downloads with progress callbacks and write-error cleanup, the full `install_mod` pipeline including snapshot rollback, and the Source RCON wire codec — pack/parse round-trips, auth success and failure, connect/send/receive timeouts, malformed framing, and every convenience command (`change_map`, `kick`, `ban`, `broadcast`).
+**170 tests** cover the Smart Unzip decision tree, the GitHub API resolver (asset selection, 403/404, malformed and non-dict JSON), streaming downloads with progress callbacks and write-error cleanup, the full `install_mod` pipeline including snapshot rollback, the Source RCON wire codec — pack/parse round-trips, auth success and failure, connect/send/receive timeouts, malformed framing, every convenience command — and the entire runtime verification layer: baseline-scoped log scanning, false-positive guards, the shutdown escalation ladder, port-collision probing, and the Windows file-handle backoff around rollback. Coverage is enforced in CI at 80%; new code has landed above that bar every phase, so the total keeps drifting upward instead of eroding.
 
 ---
 
@@ -938,7 +940,7 @@ Her ikisi de `os.replace()` ile atomik olarak yazılır. Birini silerek tam yeni
 
 ## Test & Kalite Güvencesi
 
-Tüm test paketi **tamamen çevrimdışı** çalışır — sıfır ağ çağrısı, sıfır gerçek soket. Async HTTP `httpx.MockTransport` ile taklit edilir; RCON TCP katmanı elle yazılmış `asyncio` stream sahteleri üzerinden sürülür. Her async test `asyncio.run()` ile çalıştırılır; ek eklenti (`pytest-asyncio`, `respx`) gerekmez.
+Tüm test paketi **tamamen çevrimdışı** çalışır — sıfır ağ çağrısı, sıfır gerçek soket, sıfır gerçek işlem. Async HTTP `httpx.MockTransport` ile taklit edilir; RCON TCP katmanı elle yazılmış `asyncio` stream sahteleri üzerinden sürülür; sunucu işlem yaşam döngüsü senaryolu bir subprocess dublörüne karşı test edilir — terminate/kill kademelendirmesi bile hiçbir binary başlatılmadan doğrulanır. Her async test `asyncio.run()` ile çalıştırılır; ek eklenti (`pytest-asyncio`, `respx`) gerekmez — ve tüm paket bir saniyenin oldukça altında tamamlanır.
 
 ```bash
 pip install -r requirements.txt
@@ -947,13 +949,15 @@ pytest --cov=core --cov=models --cov-report=term-missing
 
 | Modül | Kapsam |
 |---|---|
-| `core/rcon_manager.py` | %94 |
-| `core/mod_manager.py` | %92 |
 | `models/schemas.py` | %98 |
+| `core/rcon_manager.py` | %94 |
+| `core/log_validator.py` | %94 |
+| `core/server_controller.py` | %94 |
+| `core/mod_manager.py` | %92 |
 | `core/lock_manager.py` | %85 |
-| **Toplam** | **%80** |
+| **Toplam** | **%83** |
 
-**120 test**; Akıllı Zip Çıkarma karar ağacını, GitHub API çözümleyicisini (asset seçimi, 403/404, bozuk ve dict olmayan JSON), ilerleme callback'li ve yazma-hatası temizlikli streaming indirmeleri, snapshot rollback dahil tam `install_mod` pipeline'ını ve Source RCON wire codec'ini — pack/parse round-trip, auth başarı/başarısızlık, connect/send/receive timeout, bozuk çerçeveleme ve tüm kolaylık komutları (`change_map`, `kick`, `ban`, `broadcast`) — kapsar.
+**170 test**; Akıllı Zip Çıkarma karar ağacını, GitHub API çözümleyicisini (asset seçimi, 403/404, bozuk ve dict olmayan JSON), ilerleme callback'li ve yazma-hatası temizlikli streaming indirmeleri, snapshot rollback dahil tam `install_mod` pipeline'ını, Source RCON wire codec'ini — pack/parse round-trip, auth başarı/başarısızlık, connect/send/receive timeout, bozuk çerçeveleme, tüm kolaylık komutları — ve runtime doğrulama katmanının tamamını kapsar: baseline-kapsamlı log tarama, false-positive korumaları, kapatma kademelendirmesi, port çakışması yoklaması ve rollback etrafındaki Windows dosya kilidi backoff'u. Kapsam CI'da %80 barajıyla zorunlu tutulur; her fazda eklenen yeni kod bu barajın üzerinde geldiği için toplam aşınmak yerine yukarı tırmanıyor.
 
 ---
 
