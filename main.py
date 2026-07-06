@@ -19,12 +19,13 @@ from cli.app import (
     InstallationProgress,
     collect_base_dir,
     collect_plugins,
+    collect_runtime_verify,
     collect_server_config,
     console,
     show_banner,
     show_summary,
 )
-from core import config_patcher, mod_manager, snapshot, steamcmd_wrapper
+from core import config_patcher, mod_manager, server_controller, snapshot, steamcmd_wrapper
 from core.lock_manager import LockFileManager
 from core.validator import (
     StateManager,
@@ -45,6 +46,14 @@ def _parse_args() -> argparse.Namespace:
         "--restore",
         action="store_true",
         help="Reinstall all plugins from cs2-plugins.lock at their pinned versions",
+    )
+    p.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Launch the server after each plugin install and scan logs for "
+            "runtime errors (auto-rollback on confirmed failure)"
+        ),
     )
     return p.parse_args()
 
@@ -116,6 +125,7 @@ async def main() -> None:
         base_dir = collect_base_dir()
         server_config = collect_server_config()
         plugins = collect_plugins()
+        effective_verify = True if args.verify else collect_runtime_verify()
     except (KeyboardInterrupt, EOFError):
         console.print("\n[yellow]Setup cancelled by user.[/yellow]")
         return
@@ -307,6 +317,57 @@ async def main() -> None:
                         http_client=client,
                         on_progress=lambda e, k=key: prog.update_task(k, e.percent),
                     )
+
+                    if effective_verify and is_cs2_installed(server_dir):
+                        if not server_config.rcon_password:
+                            console.print(
+                                "[yellow]  RCON password empty — skipping runtime verification.[/yellow]"
+                            )
+                        else:
+                            console.print(
+                                f"[cyan]  Verifying {plugin.display_name} at runtime...[/cyan]"
+                            )
+                            result_v = await server_controller.verify_plugin_runtime(
+                                server_dir, csgo_dir, server_config, plugin.repo,
+                            )
+                            outcome = server_controller.classify_verification_outcome(result_v)
+                            if outcome == "rolled_back":
+                                if snap:
+                                    try:
+                                        await server_controller.rollback_with_retry(snap, csgo_dir)
+                                        console.print(
+                                            f"[yellow]  Rolled back to snapshot {snap.snapshot_id}[/yellow]"
+                                        )
+                                    except snapshot.SnapshotError as rb_exc:
+                                        console.print(f"[red]  Rollback failed: {rb_exc}[/red]")
+                                state.mark_failed(
+                                    f"plugin:{plugin.full_ref}",
+                                    "Runtime verification detected errors: "
+                                    + "; ".join(result_v.errors_detected[:3]),
+                                )
+                                prog.fail_task(
+                                    key,
+                                    f"Runtime verification failed for {plugin.display_name}. "
+                                    "Auto-rollback executed.",
+                                )
+                                results.append(
+                                    (
+                                        f"Plugin: {plugin.display_name}",
+                                        False,
+                                        "Runtime verification failed — auto-rollback executed",
+                                    )
+                                )
+                                continue
+                            if outcome == "inconclusive":
+                                console.print(
+                                    f"[yellow]  Runtime verification inconclusive for "
+                                    f"{plugin.display_name} — keeping install; check manually.[/yellow]"
+                                )
+                            else:
+                                console.print(
+                                    f"[green]  Runtime verification passed for {plugin.display_name}.[/green]"
+                                )
+
                     prog.complete_task(key)
                     state.mark_complete(
                         f"plugin:{plugin.full_ref}", {"version": result.version}

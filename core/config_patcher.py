@@ -15,7 +15,7 @@ METAMOD_CHECK = "csgo/addons/metamod"
 BAT_TEMPLATE = """\
 @echo off
 cd /d "{server_dir}\\game\\bin\\win64"
-start /wait cs2.exe -dedicated -usercon -console ^
+start /wait cs2.exe -dedicated -usercon -console -condebug ^
 +game_type 3 +game_mode 0 ^
 +sv_logfile 1 -serverlogging ^
 +sv_setsteamaccount {gslt_token} ^

@@ -229,6 +229,30 @@ def test_write_server_configs_interpolates_every_parameter(
         assert expected in bat, f"BAT missing expected parameter: {expected}"
 
 
+def test_write_server_configs_bat_includes_condebug_flag(
+    tmp_path: Path,
+) -> None:
+    """
+    The launch line must carry -condebug so the engine writes console.log —
+    the capture channel the runtime verification scanner depends on.
+    """
+    base_dir = tmp_path / "base"
+    server_dir = tmp_path / "cs2_server"
+    base_dir.mkdir()
+    server_dir.mkdir()
+
+    config = ServerConfig(
+        gslt_token="t",
+        auth_key="a",
+        server_ip="127.0.0.1",
+    )
+
+    write_server_configs(base_dir=base_dir, server_dir=server_dir, config=config)
+
+    bat = (server_dir / "game" / "start_server.bat").read_text(encoding="utf-8")
+    assert "-condebug" in bat, "console.log capture flag missing from launch line"
+
+
 def test_write_server_configs_copies_supplied_cfg_template(
     tmp_path: Path,
 ) -> None:

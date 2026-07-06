@@ -106,6 +106,20 @@ class LockFile:
 
 
 @dataclass
+class LogScanBaseline:
+    console_log_offset: int   # console.log byte size at capture (0 if absent)
+    captured_at_epoch: float  # capture time — mtime gate for CSSharp log files
+
+
+@dataclass
+class LogValidationResult:
+    success: bool             # load signature seen AND zero error signatures
+    plugin_name: str
+    errors_detected: List[str] = field(default_factory=list)
+    log_files_scanned: List[str] = field(default_factory=list)
+
+
+@dataclass
 class RCONCommand:
     command: str
     args: List[str] = field(default_factory=list)

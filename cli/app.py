@@ -116,6 +116,16 @@ def collect_server_config() -> ServerConfig:
     )
 
 
+def collect_runtime_verify() -> bool:
+    """Asks whether each plugin install should be verified against the live server."""
+    return Prompt.ask(
+        "\n[bold]Verify each plugin at runtime after install "
+        "(briefly launches the server and scans logs)?[/bold] [y/N]",
+        default="n",
+        console=console,
+    ).strip().lower() == "y"
+
+
 def collect_plugins() -> list[PluginRef]:
     console.rule("[bold cyan]Plugin Manager[/bold cyan]")
     console.print(
