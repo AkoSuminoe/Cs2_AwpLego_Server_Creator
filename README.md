@@ -397,8 +397,8 @@ This tool uses a **pre-seeding + async log-tailing hybrid**:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/your-username/cs2-server-creator
-cd cs2-server-creator
+git clone https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator.git
+cd Cs2_AwpLego_Server_Creator
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -887,8 +887,8 @@ Hazır bir MySQL sunucun yoksa, [XAMPP](https://www.apachefriends.org/download.h
 
 ```bash
 # 1. Repoyu klonla
-git clone https://github.com/kullanici-adi/cs2-server-creator
-cd cs2-server-creator
+git clone https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator.git
+cd Cs2_AwpLego_Server_Creator
 
 # 2. Bağımlılıkları yükle
 pip install -r requirements.txt
