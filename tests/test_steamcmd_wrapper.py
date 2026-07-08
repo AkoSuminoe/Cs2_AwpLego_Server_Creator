@@ -9,6 +9,7 @@ import pytest
 
 from core.steamcmd_wrapper import (
     PROGRESS_RE,
+    STATUS_PERCENT,
     SteamCMDInstallError,
     _classify_phase,
     ensure_disk_space,
@@ -113,24 +114,34 @@ _PROGRESS_LINE = "Update state (0x61) downloading, progress: 47.89 (3232478 / 67
 
 
 class _FakeStdout:
-    """Async line iterator matching asyncio subprocess stdout semantics."""
+    """PIPE-style byte stream serving canned output in small chunks."""
 
-    def __init__(self, lines: list[str]) -> None:
-        self._lines = [line.encode("utf-8") for line in lines]
+    def __init__(self, data: bytes, chunk_size: int = 16) -> None:
+        self._data = data
+        self._pos = 0
+        self._chunk_size = chunk_size
 
-    def __aiter__(self) -> "_FakeStdout":
-        return self
-
-    async def __anext__(self) -> bytes:
-        if not self._lines:
-            raise StopAsyncIteration
-        return self._lines.pop(0)
+    async def read(self, n: int = -1) -> bytes:
+        if self._pos >= len(self._data):
+            return b""
+        size = self._chunk_size if n < 0 else min(n, self._chunk_size)
+        chunk = self._data[self._pos:self._pos + size]
+        self._pos += len(chunk)
+        return chunk
 
 
 class _FakeSteamCMDProc:
-    def __init__(self, returncode: int, lines: Optional[list[str]] = None) -> None:
+    def __init__(
+        self,
+        returncode: int,
+        lines: Optional[list[str]] = None,
+        raw_output: Optional[bytes] = None,
+    ) -> None:
         self.returncode = returncode
-        self.stdout = _FakeStdout(lines or [])
+        data = raw_output if raw_output is not None else b"".join(
+            line.encode("utf-8") + b"\n" for line in (lines or [])
+        )
+        self.stdout = _FakeStdout(data)
 
     async def wait(self) -> int:
         return self.returncode
@@ -213,3 +224,57 @@ def test_install_cs2_raises_immediately_on_fatal_exit_code(
     with pytest.raises(SteamCMDInstallError, match="exited with code 8"):
         _run_install(tmp_path)
     assert len(launches) == 1
+
+
+# ---------------------------------------------------------------------------
+# install_cs2 — output framing (CR-rewritten progress, status lines)
+# ---------------------------------------------------------------------------
+
+def test_install_cs2_parses_carriage_return_progress_lines(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    SteamCMD rewrites its progress line with bare carriage returns — the
+    reader must treat CR as a line boundary or the bar stays frozen at 0%
+    for the whole download.
+    """
+    raw = (
+        b"Update state (0x61) downloading, progress: 5.00 (1 / 2)\r"
+        b"Update state (0x61) downloading, progress: 47.89 (3232478 / 6750000)\r"
+        b"Update state (0x61) downloading, progress: 99.10 (99 / 100)\r\n"
+    )
+    _install_proc_sequence(
+        monkeypatch, [_FakeSteamCMDProc(returncode=0, raw_output=raw)]
+    )
+
+    events = _run_install(tmp_path)
+
+    percents = [e.percent for e in events]
+    assert percents == [5.0, 47.89, 99.10]
+    assert all(e.phase is SteamCMDPhase.DOWNLOADING for e in events)
+
+
+def test_install_cs2_surfaces_status_lines_as_status_events(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Lines without a progress figure (self-update, login, pre-allocation)
+    must surface as STATUS_PERCENT events so the UI can prove liveness
+    instead of showing a dead 0% bar.
+    """
+    raw = (
+        b"Logging in user 'anonymous' to Steam Public...OK\n"
+        b"Update state (0x61) downloading, progress: 12.00 (12 / 100)\n"
+    )
+    _install_proc_sequence(
+        monkeypatch, [_FakeSteamCMDProc(returncode=0, raw_output=raw)]
+    )
+
+    events = _run_install(tmp_path)
+
+    assert len(events) == 2
+    assert events[0].percent == STATUS_PERCENT
+    assert "Logging in user" in events[0].raw_line
+    assert events[1].percent == 12.0

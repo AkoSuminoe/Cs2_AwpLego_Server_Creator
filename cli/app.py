@@ -274,6 +274,16 @@ class InstallationProgress:
         if key in self._task_ids:
             self._progress.update(self._task_ids[key], completed=completed)
 
+    def note_task(self, key: str, note: str) -> None:
+        """Shows a dim, truncated live status next to the task description."""
+        if key in self._task_ids:
+            desc = self._task_descs.get(key, key)
+            snippet = note.strip()[:48]
+            self._progress.update(
+                self._task_ids[key],
+                description=f"{desc} [dim]{snippet}[/dim]",
+            )
+
     def complete_task(self, key: str) -> None:
         if key in self._task_ids:
             self._progress.update(self._task_ids[key], completed=100.0)

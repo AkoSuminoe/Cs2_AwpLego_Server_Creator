@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from models.schemas import SteamCMDEvent, SteamCMDPhase
 
@@ -22,6 +22,10 @@ REQUIRED_DISK_BYTES = 35 * 1024**3
 # exits with these codes even though the update succeeded — one clean
 # relaunch resumes the app_update where it left off.
 _RETRYABLE_EXIT_CODES = {6, 7}
+
+# Sentinel percent for status events: lines that carry no progress figure
+# (self-update, login, pre-allocation) but tell the user SteamCMD is alive.
+STATUS_PERCENT = -1.0
 
 # Matches lines like:
 #   Update state (0x61) downloading, progress: 47.89 (3232478 / 6750000)
@@ -110,17 +114,45 @@ async def download_steamcmd(steamcmd_dir: Path) -> None:
         zip_path.unlink(missing_ok=True)
 
 
+def _parse_output_line(raw: bytes) -> Optional[SteamCMDEvent]:
+    """
+    Progress lines become percentage events; any other non-empty line is a
+    status event (percent == STATUS_PERCENT) so the UI can show activity
+    during the phases that emit no progress figures at all — self-update,
+    login, and disk pre-allocation.
+    """
+    line = raw.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None
+    m = PROGRESS_RE.search(line)
+    if m:
+        try:
+            pct = float(m.group("pct"))
+        except (ValueError, TypeError):
+            return None
+        return SteamCMDEvent(
+            phase=_classify_phase(m.group("state")),
+            percent=pct,
+            raw_line=line,
+        )
+    return SteamCMDEvent(phase=SteamCMDPhase.UNKNOWN, percent=STATUS_PERCENT, raw_line=line)
+
+
 async def install_cs2(
     steamcmd_exe: Path,
     server_dir: Path,
 ) -> AsyncGenerator[SteamCMDEvent, None]:
     """
     Async generator that launches SteamCMD and yields SteamCMDEvent for each
-    parsed progress line. The event loop stays free between lines.
+    output line: percentage events for progress lines, STATUS_PERCENT events
+    for everything else. Output is split on both CR and LF — SteamCMD rewrites
+    its progress line with bare carriage returns, so splitting on newlines
+    alone would leave the bar frozen at 0% for the entire download.
 
     Usage:
         async for event in install_cs2(steamcmd_exe, server_dir):
-            progress_bar.update(event.percent)
+            if event.percent >= 0:
+                progress_bar.update(event.percent)
     """
     if not steamcmd_exe.exists():
         raise SteamCMDInstallError(
@@ -153,19 +185,25 @@ async def install_cs2(
         assert proc.stdout is not None  # guaranteed by PIPE
 
         try:
-            async for raw_line in proc.stdout:
-                decoded = raw_line.decode("utf-8", errors="replace").rstrip()
-                m = PROGRESS_RE.search(decoded)
-                if m:
-                    try:
-                        pct = float(m.group("pct"))
-                    except (ValueError, TypeError):
-                        continue
-                    yield SteamCMDEvent(
-                        phase=_classify_phase(m.group("state")),
-                        percent=pct,
-                        raw_line=decoded,
-                    )
+            buffer = b""
+            while True:
+                chunk = await proc.stdout.read(4096)
+                at_eof = not chunk
+                buffer += chunk
+                while True:
+                    cuts = [i for i in (buffer.find(b"\r"), buffer.find(b"\n")) if i != -1]
+                    if not cuts:
+                        break
+                    cut = min(cuts)
+                    raw_line, buffer = buffer[:cut], buffer[cut + 1:]
+                    event = _parse_output_line(raw_line)
+                    if event is not None:
+                        yield event
+                if at_eof:
+                    event = _parse_output_line(buffer)
+                    if event is not None:
+                        yield event
+                    break
         except asyncio.CancelledError:
             proc.terminate()
             await proc.wait()

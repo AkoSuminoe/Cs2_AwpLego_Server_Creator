@@ -167,7 +167,10 @@ async def main() -> None:
                 async for event in steamcmd_wrapper.install_cs2(
                     steamcmd_dir / "steamcmd.exe", server_dir
                 ):
-                    prog.update_task("update", event.percent)
+                    if event.percent >= 0:
+                        prog.update_task("update", event.percent)
+                    else:
+                        prog.note_task("update", event.raw_line)
                 prog.complete_task("update")
                 state.mark_complete("cs2_updated")
                 results.append(("CS2 Update", True, "Updated & validated"))
@@ -259,7 +262,10 @@ async def main() -> None:
                     steamcmd_wrapper.ensure_disk_space(server_dir)
                     steamcmd_exe = steamcmd_dir / "steamcmd.exe"
                     async for event in steamcmd_wrapper.install_cs2(steamcmd_exe, server_dir):
-                        prog.update_task("cs2", event.percent)
+                        if event.percent >= 0:
+                            prog.update_task("cs2", event.percent)
+                        else:
+                            prog.note_task("cs2", event.raw_line)
                     prog.complete_task("cs2")
                     state.mark_complete("cs2_installed")
                     results.append(("CS2 Server", True, "Installed"))
