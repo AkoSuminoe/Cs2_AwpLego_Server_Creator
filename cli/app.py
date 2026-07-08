@@ -68,10 +68,12 @@ def collect_server_config() -> ServerConfig:
     console.rule("[bold cyan]Server Configuration[/bold cyan]")
     console.print(
         "[dim]GSLT: steamcommunity.com/dev/managegameservers\n"
-        "Auth key: steamcommunity.com/dev/apikey[/dim]\n"
+        "Auth key: steamcommunity.com/dev/apikey\n"
+        "Input is visible so you can paste and verify tokens — they are "
+        "stored in plain text inside start_server.bat anyway.[/dim]\n"
     )
     while True:
-        gslt = Prompt.ask("[bold]Steam GSLT token[/bold]", password=True, console=console).strip()
+        gslt = Prompt.ask("[bold]Steam GSLT token[/bold]", console=console).strip()
         if not gslt:
             console.print(
                 "[yellow]No GSLT — the server will run LAN-only and won't be "
@@ -83,7 +85,7 @@ def collect_server_config() -> ServerConfig:
         console.print("[red]A GSLT is exactly 32 hex characters. Check the token and retry.[/red]")
 
     while True:
-        auth_key = Prompt.ask("[bold]Steam Web API key[/bold]", password=True, console=console).strip()
+        auth_key = Prompt.ask("[bold]Steam Web API key[/bold]", console=console).strip()
         if is_safe_batch_value(auth_key):
             break
         console.print("[red]The key contains characters that would break start_server.bat.[/red]")
@@ -112,7 +114,7 @@ def collect_server_config() -> ServerConfig:
         console.print("[red]Map names cannot contain spaces or cmd metacharacters.[/red]")
 
     while True:
-        rcon_password = Prompt.ask("[bold]RCON password[/bold]", password=True, console=console)
+        rcon_password = Prompt.ask("[bold]RCON password[/bold]", console=console)
         if is_safe_batch_value(rcon_password):
             break
         console.print(
@@ -134,7 +136,7 @@ def collect_server_config() -> ServerConfig:
         except ValueError:
             db_port = 3306
         db_user = Prompt.ask("[bold]  Database username[/bold]", default="root", console=console)
-        db_pass = Prompt.ask("[bold]  Database password[/bold]", password=True, console=console)
+        db_pass = Prompt.ask("[bold]  Database password[/bold]", console=console)
         db_name = Prompt.ask("[bold]  Database name[/bold]", default="cs2_server", console=console)
         db_config = DatabaseConfig(
             host=db_host,

@@ -426,6 +426,16 @@ The tool will prompt you for:
 
 ---
 
+## 🩺 Troubleshooting
+
+| Symptom | Cause & fix |
+|---|---|
+| Window title shows **"Select …"** and nothing responds | Clicking inside a classic CMD window activates QuickEdit selection, which **pauses the app**. Press `Esc` (or `Enter`) to resume. |
+| Can't paste a token into a prompt | In classic CMD paste with **right-click**; `Ctrl+V` only works in Windows Terminal. All prompts use visible input so you can verify what landed. |
+| "Install CS2 Server" sits at 0% | SteamCMD's self-update, login, and ~33 GB disk pre-allocation emit no percentages. Watch the dim status line next to the task — as long as it changes, the install is alive. |
+
+---
+
 ## 🔌 Adding Plugins at Runtime
 
 In the plugin manager screen, enter any GitHub repo in either format:
@@ -903,6 +913,16 @@ Araç senden şunları isteyecek:
 - **RCON şifresi** (`start_server.bat`'a yazılır; `RCONClient` tarafından kullanılır)
 - **MySQL veritabanı** (isteğe bağlı — CSSharp eklentileri için `databases.json` üretir)
 - Kurmak istediğin CounterStrikeSharp eklentileri
+
+---
+
+## 🩺 Sorun Giderme
+
+| Belirti | Sebep & çözüm |
+|---|---|
+| Pencere başlığında **"Select …"** yazıyor ve hiçbir şey tepki vermiyor | Klasik CMD penceresine tıklamak QuickEdit seçim modunu açar ve **uygulamayı duraklatır**. `Esc` (veya `Enter`) ile devam eder. |
+| Prompt'a token yapıştıramıyorum | Klasik CMD'de **sağ-tık** ile yapıştır; `Ctrl+V` yalnızca Windows Terminal'de çalışır. Tüm girişler görünür — yapıştırdığını gözünle doğrulayabilirsin. |
+| "Install CS2 Server" 0%'da bekliyor | SteamCMD'nin self-update, login ve ~33 GB disk ön-tahsis fazları yüzde basmaz. Görev adının yanındaki soluk durum satırına bak — değiştiği sürece kurulum canlıdır. |
 
 ---
 
