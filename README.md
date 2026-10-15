@@ -9,7 +9,7 @@ SteamCMD · CS2 Dedicated Server · Metamod:Source 2.0 · CounterStrikeSharp · 
 <br>
 
 [![Tests](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml/badge.svg)](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml)
-[![Tests](https://img.shields.io/badge/tests-268%20passing-2ea44f?logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-312%20passing-2ea44f?logo=pytest&logoColor=white)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-87%25-2ea44f)](tests/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![asyncio](https://img.shields.io/badge/async-asyncio-6E56CF)](https://docs.python.org/3/library/asyncio.html)
@@ -24,7 +24,7 @@ SteamCMD · CS2 Dedicated Server · Metamod:Source 2.0 · CounterStrikeSharp · 
 
 <br><br>
 
-[⚡ Quick Start](#-quick-start) · [✨ Highlights](#-engineering-highlights) · [🧱 Architecture](#-architecture) · [🩺 Health Check](#-health-check) · [🔌 Plugins](#-plugins-github-or-local) · [🧪 Tests](#-testing)
+[⚡ Quick Start](#-quick-start) · [✨ Highlights](#-engineering-highlights) · [🧱 Architecture](#-architecture) · [🩺 Health Check](#-health-check) · [🔌 Plugins](#-plugins-github-or-local) · [🕛 24/7](#-running-247) · [🧪 Tests](#-testing)
 
 </div>
 
@@ -43,14 +43,15 @@ Setting up a CS2 community server by hand takes hours. You download SteamCMD and
 | | |
 |---|---|
 | ⚙️ **Async orchestration** | A 9-phase `asyncio` pipeline. SteamCMD output is streamed line by line into live progress bars; downloads are chunk-streamed with `httpx`. |
-| 📦 **Smart Unzip classifier** | A pure function inspects a ZIP's `namelist()` **before extracting a byte** and routes it as DIRECT / WRAPPER / FLAT, so no layout is hardcoded per plugin. |
-| 🧭 **Engine-aware installs** | Picks Windows assets over Linux ones and renames plugin folders to match the assembly (`plugins/X/X.dll`), the rule CounterStrikeSharp silently enforces. |
+| 📦 **Smart Unzip classifier** | A pure function inspects a ZIP's `namelist()` **before extracting a byte** and routes it as DIRECT / WRAPPER / FLAT / ANCHORED (an `addons/` or `counterstrikesharp/` tree at any depth, plus `sounds/`-style content), so no layout is hardcoded per plugin. |
+| 🧭 **Engine-aware installs** | Ranks release assets: the Windows build beats Linux, website and source zips. Renames plugin folders to match the assembly (`plugins/X/X.dll`), the rule CounterStrikeSharp silently enforces. |
+| 🕛 **24/7 supervisor** | `--serve` restarts crashes with backoff and, every day at a chosen time, warns players over RCON, updates CS2 via SteamCMD, re-applies the Metamod hook and boots again. |
 | 🛡️ **Self-healing** | Atomic ZIP snapshot before every plugin; automatic rollback on failure; a Windows file-handle backoff ladder for locked DLLs. |
 | 🔬 **Runtime verification** | Boots `cs2.exe`, polls a hand-written **Source RCON** client until ready, scans only the log bytes produced by this boot, and rolls back on confirmed errors only. |
 | 🩺 **Health check** | `--check` (static, seconds) + `--live` (real boot). It caught real bugs during development: a Source 1 Metamod build, a SourceHook ABI mismatch and misnamed plugin folders. |
 | 🔒 **Reproducible servers** | `cs2-plugins.lock` pins every plugin by version, commit and URL; `--restore` rebuilds an identical plugin set anywhere. |
 | ⚛️ **Crash-safe state** | All state files are written via temp file + `os.replace()`, so a crash never leaves them half-written. |
-| 🧪 **Fully offline tests** | **268 tests, 87% coverage, < 1 s.** HTTP via `httpx.MockTransport`, RCON via asyncio stream fakes, process lifecycle via a scripted subprocess double. CI enforces ≥ 80%. |
+| 🧪 **Fully offline tests** | **312 tests, 87% coverage, < 1 s.** HTTP via `httpx.MockTransport`, RCON via asyncio stream fakes, process lifecycle via a scripted subprocess double. CI enforces ≥ 80%. |
 
 ---
 
@@ -137,10 +138,15 @@ python main.py                      # interactive full install
 | `python main.py --configs --dir <server>` | List every plugin's config files and open the folder in Explorer |
 | `python main.py --check --dir <server>` | Static health check, read-only, in seconds |
 | `python main.py --check --live --dir <server>` | Boot the server and confirm Metamod, CSSharp and every plugin loaded |
-| `python main.py --update --dir <server>` | Update CS2 via SteamCMD and re-apply the `gameinfo.gi` patch that updates wipe |
+| `python main.py --serve --dir <server> [--restart-at 04:00]` | Run 24/7: crash restarts + daily warn → update → restart (default 00:00) |
+| `python main.py --install-service --dir <server>` | Start `--serve` automatically at Windows logon (no admin needed); `--uninstall-service` removes it |
+| `python main.py --stop --dir <server>` | Gracefully stop a running `--serve` instance |
+| `python main.py --update --dir <server>` | One-off CS2 update via SteamCMD + re-apply the `gameinfo.gi` patch that updates wipe |
 | `python main.py --restore` | Reinstall the exact plugin set pinned in `cs2-plugins.lock` |
 
-The interactive installer asks for: install directory, Steam GSLT + Web API key, IP / port / map, RCON password, optional MySQL, and plugins.
+The interactive installer asks for: install directory, Steam GSLT + Web API key, IP / port, start map, RCON password, optional MySQL, and plugins.
+
+The **start map** can be a map name (`de_mirage`), a Workshop map ID or URL (→ `+host_workshop_map`), or `c:<collection id>` (→ `+host_workshop_collection`). Workshop downloads need the Web API key.
 
 ---
 
@@ -187,6 +193,23 @@ python main.py --dir C:\cs2\server --add-plugin "D:\Downloads\AutoRestart"
 python main.py --dir C:\cs2\server --check --live   # → All loaded: AutoRestart, BotHiderImpl, BotRandomizer
 ```
 
+### Tested against real plugins
+
+All of these were installed with `--add-plugin` on a real CS2 server (Metamod 2.0 + CSSharp v1.0.376), then verified with `--check --live`:
+
+| Plugin | Release layout | Result |
+|---|---|---|
+| [NickFox007/AnyBaseLibCS2](https://github.com/NickFox007/AnyBaseLibCS2) | `addons/` → `shared/` | ✅ loaded |
+| [NickFox007/PlayerSettingsCS2](https://github.com/NickFox007/PlayerSettingsCS2) | `addons/` (plugin + API) | ✅ loaded |
+| [NickFox007/MenuManagerCS2](https://github.com/NickFox007/MenuManagerCS2) | `addons/` (plugin + API) | ✅ loaded |
+| [daffyyyy/CS2-SimpleAdmin](https://github.com/daffyyyy/CS2-SimpleAdmin) | `counterstrikesharp/` without `addons/`, 3 plugins + API | ✅ loaded |
+| [ABKAM2023/CS2-LevelsRanks-Core](https://github.com/ABKAM2023/CS2-LevelsRanks-Core) | `Plugin/addons/` + `Sounds/sounds/` | ✅ loaded |
+| [HerrMagiic/CSS-CreateCustomCommands](https://github.com/HerrMagiic/CSS-CreateCustomCommands) | flat DLLs at the zip root | ✅ loaded |
+| [XBribo/CS2-Bot-Hider](https://github.com/XBribo/CS2-Bot-Hider) | Linux + Windows zips | ✅ loaded (Windows build picked) |
+| [ed0ard/CS2-Bot-Randomizer](https://github.com/ed0ard/CS2-Bot-Randomizer) | repo name ≠ DLL name | ✅ loaded (folder renamed) |
+| ZusDev/CS2-AutoRestart (local folder + local `.zip`) | flat DLL + `lang/` | ✅ loaded |
+| [Nereziel/cs2-WeaponPaints](https://github.com/Nereziel/cs2-WeaponPaints) | plugin zip + website zip | ⚠️ installed correctly; plugin refuses to start until MySQL is configured, and `--check --live` reports exactly that |
+
 ### Editing plugin settings
 
 Plugins keep their settings in different places. CounterStrikeSharp generates `configs/plugins/<Name>/<Name>.json` on first load, while others ship JSON next to their DLL. `--configs` finds both:
@@ -203,6 +226,28 @@ Open folder # (Enter to exit): 3        → opens the folder in Explorer
 ```
 
 Edit the files, then restart the server or run `css_plugins reload <name>`.
+
+---
+
+## 🕛 Running 24/7
+
+```bash
+python main.py --serve --dir C:\cs2\server --restart-at 05:00
+python main.py --install-service --dir C:\cs2\server --restart-at 05:00   # start at every logon
+```
+
+```mermaid
+flowchart LR
+    S(["--serve"]) --> B[Boot cs2.exe<br/>own console window]
+    B --> W{every 2 s}
+    W -- "crashed" --> C[Backoff 5s / 15s / 60s<br/>give up after 5 in 10 min] --> B
+    W -- "restart request" --> R[say 60s · 10s warning<br/>stop → start] --> W
+    W -- "05:00" --> D[say warnings → stop<br/>SteamCMD app_update 730 validate<br/>re-patch gameinfo.gi] --> B
+    W -- "stop request" --> X([clean shutdown])
+```
+
+- **Plugins without restarting by hand.** `--add-plugin` sees the supervisor and requests a restart; players get a 60-second warning. A manually started server is restarted after a confirmation prompt.
+- **Visible log.** Every event (build before/after an update, crashes, restarts) is timestamped in `supervisor.log`.
 
 ---
 
@@ -284,14 +329,20 @@ async with RCONClient(host="127.0.0.1", port=27015, password="secret") as rcon:
 pytest --cov=core --cov=models --cov-report=term-missing
 ```
 
-- **268 tests in under a second, fully offline.** No network, no sockets, no real processes.
+- **312 tests in under a second, fully offline.** No network, no sockets, no real processes.
 - **Covered areas:**
-  - The Smart Unzip decision tree, including real-world regressions (a `lang/` folder next to the DLLs, a Linux asset listed first, a repo name ≠ assembly name).
+  - The Smart Unzip decision tree, with regressions taken from real releases:
+    - a `lang/` folder next to the DLLs;
+    - a Linux or website zip listed first (WeaponPaints);
+    - `counterstrikesharp/` without `addons/` (CS2-SimpleAdmin);
+    - `Plugin/addons` beside `Sounds/sounds` (LevelsRanks);
+    - a repo name ≠ assembly name.
   - The GitHub resolver and the Metamod 2.0 drop-server resolver.
   - Streaming downloads and snapshot rollback.
   - The RCON wire codec and timeouts.
   - The process shutdown escalation ladder and baseline-scoped log scanning.
-  - Static and live health checks.
+  - Static and live health checks, including per-plugin load failures parsed from real CSSharp logs.
+  - The 24/7 supervisor: schedule math, the daily warn → stop → update → re-patch → start order, crash backoff and give-up, and restart/stop requests (fake clock, no real waiting).
 - **CI** (GitHub Actions) fails under 80% coverage. Current: **87%**.
 
 | Module | Coverage |
