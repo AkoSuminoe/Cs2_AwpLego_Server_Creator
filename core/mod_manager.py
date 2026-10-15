@@ -68,6 +68,29 @@ def parse_repo_string(repo: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 _WINDOWS_ASSET_RE = re.compile(r"(?:^|[^a-z])win(?:dows|64|32)?(?:[^a-z]|$)", re.IGNORECASE)
+_SIDE_ARCHIVE_RE = re.compile(
+    r"(?:^|[^a-z])(?:website|web|src|source|docs?|examples?|debug|symbols)(?:[^a-z]|$)",
+    re.IGNORECASE,
+)
+
+
+def _asset_score(name: str, repo_name: str) -> int:
+    """Higher is better: Windows plugin build > neutral > Linux / side archives."""
+    lower = name.lower()
+    score = 0
+    if _WINDOWS_ASSET_RE.search(name):
+        score += 4
+    if "linux" in lower:
+        score -= 4
+    if _SIDE_ARCHIVE_RE.search(name):
+        score -= 3
+    def _norm(s: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", s.lower())
+
+    core = _norm(re.sub(r"^(?:cs2|css|cs)[-_.]?", "", repo_name, flags=re.IGNORECASE))
+    if core and core in _norm(name):
+        score += 1
+    return score
 
 
 @github_retry()
@@ -126,11 +149,9 @@ async def resolve_latest_asset_url(
 
     zip_assets = [a for a in assets if a["name"].lower().endswith(".zip")]
     if zip_assets:
-        # Many plugins ship per-OS builds; this server is Windows-only, so a
-        # Linux zip listed first must never win by position alone.
-        windows = [a for a in zip_assets if _WINDOWS_ASSET_RE.search(a["name"])]
-        not_linux = [a for a in zip_assets if "linux" not in a["name"].lower()]
-        best = (windows or not_linux or zip_assets)[0]
+        # Releases often ship per-OS builds and side archives (a website, the
+        # source). Rank instead of taking the first zip; ties keep list order.
+        best = max(zip_assets, key=lambda a: _asset_score(a["name"], repo_name))
         return best["browser_download_url"], version, commit_ref
 
     return assets[0]["browser_download_url"], version, commit_ref

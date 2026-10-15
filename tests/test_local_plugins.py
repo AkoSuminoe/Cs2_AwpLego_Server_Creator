@@ -199,3 +199,34 @@ def test_align_leaves_ambiguous_layout_alone(tmp_path: Path) -> None:
     plugins = tmp_path / "plugins"
     install_local(src, target_dir=plugins / "repo-name")
     assert (plugins / "repo-name" / "A.dll").is_file()
+
+
+def _resolve_repo(repo: str, asset_names: list[str]) -> str:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "tag_name": "v1",
+            "assets": [{"name": n, "browser_download_url": f"https://fake/{n}"} for n in asset_names],
+        })
+
+    async def _run() -> str:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(_handler)) as client:
+            url, _, _ = await resolve_latest_asset_url(repo, None, client)
+            return url
+
+    return asyncio.run(_run())
+
+
+def test_plugin_zip_beats_website_zip_listed_first() -> None:
+    """Nereziel/cs2-WeaponPaints ships WeaponPaints-Website.zip before WeaponPaints.zip."""
+    url = _resolve_repo("Nereziel/cs2-WeaponPaints", ["WeaponPaints-Website.zip", "WeaponPaints.zip"])
+    assert url.endswith("/WeaponPaints.zip")
+
+
+@pytest.mark.parametrize("side", ["Plugin-src.zip", "Plugin-source.zip", "Plugin-docs.zip", "Plugin-debug.zip"])
+def test_side_archives_lose_to_plugin_build(side: str) -> None:
+    assert _resolve_repo("owner/Plugin", [side, "Plugin.zip"]).endswith("/Plugin.zip")
+
+
+def test_repo_name_match_breaks_ties() -> None:
+    url = _resolve_repo("owner/CS2-SimpleAdmin", ["Extras.zip", "CS2-SimpleAdmin-1.9.0.zip"])
+    assert url.endswith("CS2-SimpleAdmin-1.9.0.zip")
