@@ -9,8 +9,8 @@ SteamCMD · CS2 Dedicated Server · Metamod:Source 2.0 · CounterStrikeSharp · 
 <br>
 
 [![Tests](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml/badge.svg)](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml)
-[![Tests](https://img.shields.io/badge/tests-260%20passing-2ea44f?logo=pytest&logoColor=white)](tests/)
-[![Coverage](https://img.shields.io/badge/coverage-88%25-2ea44f)](tests/)
+[![Tests](https://img.shields.io/badge/tests-268%20passing-2ea44f?logo=pytest&logoColor=white)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-87%25-2ea44f)](tests/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
 [![asyncio](https://img.shields.io/badge/async-asyncio-6E56CF)](https://docs.python.org/3/library/asyncio.html)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](#-requirements)
@@ -50,7 +50,7 @@ Setting up a CS2 community server by hand takes hours. You download SteamCMD and
 | 🩺 **Health check** | `--check` (static, seconds) + `--live` (real boot). It caught real bugs during development: a Source 1 Metamod build, a SourceHook ABI mismatch and misnamed plugin folders. |
 | 🔒 **Reproducible servers** | `cs2-plugins.lock` pins every plugin by version, commit and URL; `--restore` rebuilds an identical plugin set anywhere. |
 | ⚛️ **Crash-safe state** | All state files are written via temp file + `os.replace()`, so a crash never leaves them half-written. |
-| 🧪 **Fully offline tests** | **260 tests, 88% coverage, < 1 s.** HTTP via `httpx.MockTransport`, RCON via asyncio stream fakes, process lifecycle via a scripted subprocess double. CI enforces ≥ 80%. |
+| 🧪 **Fully offline tests** | **268 tests, 87% coverage, < 1 s.** HTTP via `httpx.MockTransport`, RCON via asyncio stream fakes, process lifecycle via a scripted subprocess double. CI enforces ≥ 80%. |
 
 ---
 
@@ -134,6 +134,7 @@ python main.py                      # interactive full install
 | `python main.py` | Full install: SteamCMD → CS2 → Metamod 2.0 → CounterStrikeSharp → configs → plugins |
 | `python main.py --verify` | Same, and boots the server after each plugin to prove it loads (auto-rollback on errors) |
 | `python main.py --add-plugin <repo \| URL \| path> --dir <server>` | Add plugins to an existing server, no prompts (repeatable) |
+| `python main.py --configs --dir <server>` | List every plugin's config files and open the folder in Explorer |
 | `python main.py --check --dir <server>` | Static health check, read-only, in seconds |
 | `python main.py --check --live --dir <server>` | Boot the server and confirm Metamod, CSSharp and every plugin loaded |
 | `python main.py --update --dir <server>` | Update CS2 via SteamCMD and re-apply the `gameinfo.gi` patch that updates wipe |
@@ -185,6 +186,23 @@ python main.py --dir C:\cs2\server \
 python main.py --dir C:\cs2\server --add-plugin "D:\Downloads\AutoRestart"
 python main.py --dir C:\cs2\server --check --live   # → All loaded: AutoRestart, BotHiderImpl, BotRandomizer
 ```
+
+### Editing plugin settings
+
+Plugins keep their settings in different places. CounterStrikeSharp generates `configs/plugins/<Name>/<Name>.json` on first load, while others ship JSON next to their DLL. `--configs` finds both:
+
+```text
+python main.py --configs --dir C:\cs2\server
+
+ #  Plugin / component   Folder                       Config files
+ 1  Server (server.cfg)  cfg                          server.cfg
+ 2  CounterStrikeSharp   configs                      core.json
+ 3  AutoRestart          configs/plugins/AutoRestart  AutoRestart.json, en.json
+ 4  BotRandomizer        plugins/BotRandomizer        cosmetic_catalog.json, …
+Open folder # (Enter to exit): 3        → opens the folder in Explorer
+```
+
+Edit the files, then restart the server or run `css_plugins reload <name>`.
 
 ---
 
@@ -266,7 +284,7 @@ async with RCONClient(host="127.0.0.1", port=27015, password="secret") as rcon:
 pytest --cov=core --cov=models --cov-report=term-missing
 ```
 
-- **260 tests in under a second, fully offline.** No network, no sockets, no real processes.
+- **268 tests in under a second, fully offline.** No network, no sockets, no real processes.
 - **Covered areas:**
   - The Smart Unzip decision tree, including real-world regressions (a `lang/` folder next to the DLLs, a Linux asset listed first, a repo name ≠ assembly name).
   - The GitHub resolver and the Metamod 2.0 drop-server resolver.
@@ -274,7 +292,7 @@ pytest --cov=core --cov=models --cov-report=term-missing
   - The RCON wire codec and timeouts.
   - The process shutdown escalation ladder and baseline-scoped log scanning.
   - Static and live health checks.
-- **CI** (GitHub Actions) fails under 80% coverage. Current: **88%**.
+- **CI** (GitHub Actions) fails under 80% coverage. Current: **87%**.
 
 | Module | Coverage |
 |---|---|

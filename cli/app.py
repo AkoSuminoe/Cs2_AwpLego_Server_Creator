@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from rich import box
 from rich.console import Console
@@ -24,6 +24,7 @@ from models.schemas import DatabaseConfig, PluginRef, ServerConfig
 
 if TYPE_CHECKING:
     from core.health_check import CheckItem
+    from core.plugin_configs import ConfigLocation
 
 console = Console()
 
@@ -421,3 +422,58 @@ def show_check_report(items: list[CheckItem], title: str = "Health Check") -> No
     for item in items:
         table.add_row(item.name, _CHECK_STATUS[item.status], item.detail)
     console.print(table)
+
+
+def _short(path: Path, root: Path) -> str:
+    """Path relative to csgo/, with the long CSSharp prefix dropped."""
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        return str(path)
+    return rel.removeprefix("addons/counterstrikesharp/") or "."
+
+
+def browse_configs(
+    locations: list[ConfigLocation],
+    root: Path,
+    opener: Callable[[Path], None],
+) -> None:
+    """Lists every config location and opens the chosen folder until Enter."""
+    while True:
+        console.rule("[bold cyan]Plugin & Server Configs[/bold cyan]")
+        table = Table(box=box.ROUNDED, border_style="cyan")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Plugin / component", style="bold white")
+        table.add_column("Folder", style="cyan", no_wrap=True)
+        table.add_column("Config files", style="dim")
+        for i, loc in enumerate(locations, 1):
+            files = ", ".join(f.name for f in loc.files[:3])
+            if len(loc.files) > 3:
+                files += f" (+{len(loc.files) - 3})"
+            detail = files or "—"
+            if loc.note:
+                detail += f"\n[italic]{loc.note}[/italic]"
+            table.add_row(str(i), loc.name, _short(loc.folder, root), detail)
+        console.print(table)
+        console.print(
+            "[dim]Edit the files with any text editor, then restart the server "
+            "(or run css_plugins reload <name>).[/dim]"
+        )
+        raw = Prompt.ask(
+            "Open folder # [dim](Enter to exit)[/dim]", default="", show_default=False,
+            console=console,
+        ).strip()
+        if not raw:
+            return
+        try:
+            idx = int(raw) - 1
+            if not 0 <= idx < len(locations):
+                raise ValueError
+        except ValueError:
+            console.print(f"[red]Enter a number between 1 and {len(locations)}.[/red]")
+            continue
+        try:
+            opener(locations[idx].folder)
+            console.print(f"[green]Opened {locations[idx].folder}[/green]")
+        except OSError as exc:
+            console.print(f"[red]Could not open folder: {exc}[/red]")

@@ -23,12 +23,13 @@ from cli.app import (
     collect_runtime_verify,
     collect_server_config,
     console,
+    browse_configs,
     show_banner,
     show_check_report,
     show_summary,
     validate_plugin_input,
 )
-from core import config_patcher, health_check, mod_manager, server_controller, snapshot, steamcmd_wrapper
+from core import config_patcher, health_check, mod_manager, plugin_configs, server_controller, snapshot, steamcmd_wrapper
 from core.lock_manager import LockFileManager
 from core.validator import (
     StateManager,
@@ -68,6 +69,11 @@ def _parse_args() -> argparse.Namespace:
             "Install a plugin into an existing server: owner/repo, a GitHub URL, "
             "or a local folder/.zip (repeatable)"
         ),
+    )
+    mode.add_argument(
+        "--configs",
+        action="store_true",
+        help="List plugin/server config files and open their folders",
     )
     mode.add_argument(
         "--check",
@@ -174,7 +180,15 @@ async def _run_add_plugins(base_dir: Path, sources: list[str], verify: bool) -> 
                     verify_config=verify_config,
                 )
     show_summary(results)
+    _print_config_hint(base_dir)
     return all(ok for _, ok, _ in results)
+
+
+def _print_config_hint(base_dir: Path) -> None:
+    console.print(
+        "[dim]Tweak plugin settings:[/dim] "
+        f'[cyan]python main.py --configs --dir "{base_dir}"[/cyan]'
+    )
 
 
 async def _ensure_metamod(
@@ -476,6 +490,26 @@ async def main() -> None:
             sys.exit(1)
         return
 
+    if args.configs:
+        try:
+            base_dir = _resolve_base_dir(args, create=False)
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled by user.[/yellow]")
+            return
+        csgo_dir = base_dir / "cs2_server" / "game" / "csgo"
+        if not csgo_dir.is_dir():
+            console.print(f"[red]No CS2 install found under {base_dir}.[/red]")
+            sys.exit(1)
+        try:
+            browse_configs(
+                plugin_configs.list_config_locations(csgo_dir),
+                csgo_dir,
+                plugin_configs.open_folder,
+            )
+        except (KeyboardInterrupt, EOFError):
+            pass
+        return
+
     if args.check:
         try:
             base_dir = _resolve_base_dir(args, create=False)
@@ -712,6 +746,8 @@ async def main() -> None:
 
     # Phase 9 — summary
     show_summary(results)
+    if plugins:
+        _print_config_hint(base_dir)
 
 
 if __name__ == "__main__":
