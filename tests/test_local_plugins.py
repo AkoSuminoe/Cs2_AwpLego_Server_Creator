@@ -230,3 +230,60 @@ def test_side_archives_lose_to_plugin_build(side: str) -> None:
 def test_repo_name_match_breaks_ties() -> None:
     url = _resolve_repo("owner/CS2-SimpleAdmin", ["Extras.zip", "CS2-SimpleAdmin-1.9.0.zip"])
     assert url.endswith("CS2-SimpleAdmin-1.9.0.zip")
+
+
+# ---------------------------------------------------------------------------
+# Anchored layouts seen in real releases
+# ---------------------------------------------------------------------------
+
+def _csgo_paths(csgo: Path) -> set[str]:
+    return {p.relative_to(csgo).as_posix() for p in csgo.rglob("*") if p.is_file()}
+
+
+def test_counterstrikesharp_root_routes_to_addons(tmp_path: Path) -> None:
+    """daffyyyy/CS2-SimpleAdmin ships counterstrikesharp/{plugins,shared}/ without addons/."""
+    src = _write_zip(tmp_path / "CS2-SimpleAdmin-1.9.0.zip", {
+        "counterstrikesharp/plugins/CS2-SimpleAdmin/CS2-SimpleAdmin.dll": b"",
+        "counterstrikesharp/plugins/CS2-SimpleAdmin_FunCommands/CS2-SimpleAdmin_FunCommands.dll": b"",
+        "counterstrikesharp/shared/CS2-SimpleAdminApi/CS2-SimpleAdminApi.dll": b"",
+    })
+    csgo = tmp_path / "csgo"
+    plugins = csgo / "addons" / "counterstrikesharp" / "plugins"
+    result = install_local(src, target_dir=plugins / "CS2-SimpleAdmin", direct_target_dir=csgo)
+
+    assert result.zip_case == ZipCase.ANCHORED
+    assert _csgo_paths(csgo) == {
+        "addons/counterstrikesharp/plugins/CS2-SimpleAdmin/CS2-SimpleAdmin.dll",
+        "addons/counterstrikesharp/plugins/CS2-SimpleAdmin_FunCommands/CS2-SimpleAdmin_FunCommands.dll",
+        "addons/counterstrikesharp/shared/CS2-SimpleAdminApi/CS2-SimpleAdminApi.dll",
+    }
+
+
+def test_nested_addons_with_content_folder_beside_it(tmp_path: Path) -> None:
+    """ABKAM2023/CS2-LevelsRanks-Core ships Plugin/addons/... and Sounds/sounds/..."""
+    src = _write_zip(tmp_path / "LR.Core.zip", {
+        "Plugin/addons/counterstrikesharp/plugins/LevelsRanks/LevelsRanks.dll": b"",
+        "Plugin/addons/counterstrikesharp/shared/LevelsRanksApi/LevelsRanksApi.dll": b"",
+        "Sounds/sounds/levels_ranks/levelup.vsnd_c": b"",
+        "README.md": b"",
+    })
+    csgo = tmp_path / "csgo"
+    result = install_local(
+        src, target_dir=csgo / "addons/counterstrikesharp/plugins/LR.Core", direct_target_dir=csgo
+    )
+    assert result.zip_case == ZipCase.ANCHORED
+    assert _csgo_paths(csgo) == {
+        "addons/counterstrikesharp/plugins/LevelsRanks/LevelsRanks.dll",
+        "addons/counterstrikesharp/shared/LevelsRanksApi/LevelsRanksApi.dll",
+        "sounds/levels_ranks/levelup.vsnd_c",
+    }
+
+
+def test_plain_addons_and_wrapped_addons_keep_classic_cases(tmp_path: Path) -> None:
+    csgo = tmp_path / "csgo"
+    direct = _write_zip(tmp_path / "d.zip", {"addons/counterstrikesharp/plugins/A/A.dll": b""})
+    wrapped = _write_zip(tmp_path / "w.zip", {"B-v1/addons/counterstrikesharp/plugins/B/B.dll": b""})
+    assert install_local(direct, target_dir=tmp_path / "x", direct_target_dir=csgo).zip_case == ZipCase.DIRECT
+    assert install_local(wrapped, target_dir=tmp_path / "y", direct_target_dir=csgo).zip_case == ZipCase.WRAPPER_FLATTEN
+    assert {"addons/counterstrikesharp/plugins/A/A.dll",
+            "addons/counterstrikesharp/plugins/B/B.dll"} <= _csgo_paths(csgo)

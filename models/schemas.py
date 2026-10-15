@@ -9,6 +9,7 @@ class ZipCase(Enum):
     DIRECT = auto()           # addons/ at root — Metamod, CSSharp
     WRAPPER_FLATTEN = auto()  # single wrapper folder — most GitHub plugin releases
     FLAT_DLL = auto()         # DLL files directly at root
+    ANCHORED = auto()         # addons/ or counterstrikesharp/ found deeper; routed onto csgo/
     AMBIGUOUS = auto()        # none of the above matched
 
 

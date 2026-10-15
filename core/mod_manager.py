@@ -403,28 +403,9 @@ async def _install_from_url(
                 f"Downloaded asset for '{repo}' is not a valid ZIP: {exc}"
             ) from exc
 
-        case, wrapper_prefix = _classify_zip(namelist)
-
-        if case == ZipCase.AMBIGUOUS:
-            raise UnrecognizedZipStructureError(
-                f"Cannot determine ZIP layout for '{repo}'.\n"
-                f"Archive contents (first 30 entries): {namelist[:30]}\n"
-                "Expected: 'addons/' at root, a single wrapper folder, "
-                "or .dll files at root."
-            )
-
-        dest_dir = target_dir
-        if direct_target_dir is not None and _routes_to_addons(namelist, case, wrapper_prefix):
-            dest_dir = direct_target_dir
-
-        try:
-            files_written = _extract_zip(zip_path, dest_dir, case, wrapper_prefix)
-        except (OSError, zipfile.BadZipFile) as exc:
-            raise UnrecognizedZipStructureError(
-                f"Failed to extract '{repo}' into {dest_dir}: {exc}"
-            ) from exc
-        if dest_dir == target_dir:
-            dest_dir = align_plugin_folder(dest_dir)
+        case, dest_dir, files_written = _extract_archive(
+            zip_path, namelist, repo, target_dir, direct_target_dir
+        )
 
     return ModInstallResult(
         repo=repo,
@@ -435,6 +416,122 @@ async def _install_from_url(
         download_url=download_url,
         commit_ref=commit_ref,
     )
+
+
+# Game content folders that belong directly under csgo/ when a release ships
+# them beside its addons tree (e.g. LevelsRanks: Plugin/addons + Sounds/sounds).
+_CONTENT_DIRS = {
+    "sounds", "soundevents", "materials", "models", "maps", "particles",
+    "panorama", "resource", "cfg", "scripts",
+}
+_CSS_CHILDREN = {"plugins", "shared", "configs", "gamedata"}
+
+
+def _anchored_plan(namelist: list[str]) -> Optional[tuple[str, str]]:
+    """
+    Finds where the engine tree starts inside an archive, at any depth:
+      .../addons/<x>/...                       → (prefix, "")         mounted on csgo/
+      .../counterstrikesharp/{plugins,shared…} → (prefix, "addons/")  mounted on csgo/addons/
+    Returns the shallowest (strip_prefix, mount) or None.
+    """
+    best: Optional[tuple[int, str, str]] = None
+    for name in namelist:
+        parts = name.split("/")
+        for i, seg in enumerate(parts[:-1]):
+            low = seg.lower()
+            nxt = parts[i + 1].lower() if i + 1 < len(parts) else ""
+            if low == "addons" and nxt:
+                mount = ""
+            elif low == "counterstrikesharp" and nxt in _CSS_CHILDREN and (
+                i == 0 or parts[i - 1].lower() != "addons"
+            ):
+                mount = "addons/"
+            else:
+                continue
+            prefix = "/".join(parts[:i]) + ("/" if i else "")
+            if best is None or i < best[0]:
+                best = (i, prefix, mount)
+            break
+    return (best[1], best[2]) if best else None
+
+
+def _extract_anchored(
+    zip_path: Path, csgo_dir: Path, prefix: str, mount: str
+) -> list[str]:
+    """Extracts the engine tree under prefix onto csgo_dir/mount, plus any
+    recognised game-content folders found elsewhere in the archive."""
+    files_written: list[str] = []
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for info in zf.infolist():
+            name = info.filename
+            if info.is_dir() or any(name.startswith(skip) for skip in _SKIP_PREFIXES):
+                continue
+            if name.startswith(prefix) and name[len(prefix):].split("/", 1)[0].lower() in (
+                {"addons"} if mount == "" else {"counterstrikesharp"}
+            ):
+                dest = csgo_dir / mount / name[len(prefix):]
+            else:
+                parts = name.split("/")
+                # "Sounds/sounds/..." — the outer folder is just a wrapper.
+                idx = next(
+                    (j for j, seg in enumerate(parts[:-1])
+                     if seg.lower() in _CONTENT_DIRS and parts[j + 1].lower() != seg.lower()),
+                    None,
+                )
+                if idx is None:
+                    continue  # READMEs, screenshots, source — not server content
+                dest = csgo_dir.joinpath(*parts[idx:])
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(info) as src, dest.open("wb") as dst:
+                dst.write(src.read())
+            files_written.append(str(dest))
+    return files_written
+
+
+def _extract_archive(
+    zip_path: Path,
+    namelist: list[str],
+    label: str,
+    target_dir: Path,
+    direct_target_dir: Optional[Path],
+) -> tuple[ZipCase, Path, list[str]]:
+    """Classify → route → extract → align, shared by GitHub and local installs."""
+    case, wrapper_prefix = _classify_zip(namelist)
+
+    if direct_target_dir is not None:
+        plan = _anchored_plan(namelist)
+        simple = case == ZipCase.DIRECT or (
+            plan is not None and plan[1] == "" and plan[0] == (wrapper_prefix or "")
+        )
+        if plan is not None and not simple:
+            try:
+                files = _extract_anchored(zip_path, direct_target_dir, *plan)
+            except (OSError, zipfile.BadZipFile) as exc:
+                raise UnrecognizedZipStructureError(
+                    f"Failed to extract '{label}' into {direct_target_dir}: {exc}"
+                ) from exc
+            return ZipCase.ANCHORED, direct_target_dir, files
+
+    if case == ZipCase.AMBIGUOUS:
+        raise UnrecognizedZipStructureError(
+            f"Cannot determine ZIP layout for '{label}'.\n"
+            f"Archive contents (first 30 entries): {namelist[:30]}\n"
+            "Expected: 'addons/' or 'counterstrikesharp/' somewhere, a single "
+            "wrapper folder, or .dll files at root."
+        )
+
+    dest_dir = target_dir
+    if direct_target_dir is not None and _routes_to_addons(namelist, case, wrapper_prefix):
+        dest_dir = direct_target_dir
+    try:
+        files_written = _extract_zip(zip_path, dest_dir, case, wrapper_prefix)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise UnrecognizedZipStructureError(
+            f"Failed to extract '{label}' into {dest_dir}: {exc}"
+        ) from exc
+    if dest_dir == target_dir:
+        dest_dir = align_plugin_folder(dest_dir)
+    return case, dest_dir, files_written
 
 
 def align_plugin_folder(plugin_dir: Path) -> Path:
@@ -496,24 +593,9 @@ def install_local(
         except zipfile.BadZipFile as exc:
             raise UnrecognizedZipStructureError(f"'{source}' is not a valid ZIP: {exc}") from exc
 
-        case, wrapper_prefix = _classify_zip(namelist)
-        if case == ZipCase.AMBIGUOUS:
-            raise UnrecognizedZipStructureError(
-                f"Cannot determine plugin layout for '{source}'.\n"
-                f"Contents (first 30 entries): {namelist[:30]}"
-            )
-
-        dest_dir = target_dir
-        if direct_target_dir is not None and _routes_to_addons(namelist, case, wrapper_prefix):
-            dest_dir = direct_target_dir
-        try:
-            files_written = _extract_zip(zip_path, dest_dir, case, wrapper_prefix)
-        except (OSError, zipfile.BadZipFile) as exc:
-            raise UnrecognizedZipStructureError(
-                f"Failed to extract '{source}' into {dest_dir}: {exc}"
-            ) from exc
-        if dest_dir == target_dir:
-            dest_dir = align_plugin_folder(dest_dir)
+        case, dest_dir, files_written = _extract_archive(
+            zip_path, namelist, str(source), target_dir, direct_target_dir
+        )
 
     return ModInstallResult(
         repo=source.stem,
