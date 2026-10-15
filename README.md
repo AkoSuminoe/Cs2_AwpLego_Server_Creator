@@ -1,1043 +1,352 @@
 <div align="center">
 
-# 🎮 CS2 Automated Server Setup & Management Tool
+# 🎮 CS2 Server Creator
 
-**Deploy a fully configured Counter-Strike 2 dedicated server — with mods, plugins, live RCON control, automatic backups, and deterministic restore — in a single command.**
+### One command from an empty folder to a modded, verified Counter-Strike 2 server.
+
+SteamCMD · CS2 Dedicated Server · Metamod:Source 2.0 · CounterStrikeSharp · any GitHub or local plugin
 
 <br>
 
 [![Tests](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml/badge.svg)](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/actions/workflows/tests.yml)
-[![Coverage](https://img.shields.io/badge/coverage-86%25-2ea44f)](tests/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-
+[![Tests](https://img.shields.io/badge/tests-260%20passing-2ea44f?logo=pytest&logoColor=white)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-88%25-2ea44f)](tests/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Async](https://img.shields.io/badge/async-asyncio-6E56CF)](https://docs.python.org/3/library/asyncio.html)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D6)](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator)
-[![Code Style](https://img.shields.io/badge/style-PEP8-1a1a1a)](https://peps.python.org/pep-0008/)
+[![asyncio](https://img.shields.io/badge/async-asyncio-6E56CF)](https://docs.python.org/3/library/asyncio.html)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows&logoColor=white)](#-requirements)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 <br>
 
-**[🇬🇧 English](#-what-is-this)** &nbsp;·&nbsp; **[🇹🇷 Türkçe](#-bu-nedir)**
+<img src="docs/media/demo.gif" alt="Health check booting a real CS2 server and confirming Metamod, CounterStrikeSharp and three plugins loaded" width="800">
 
-[⚡ Quick Start](#-quick-start) &nbsp;•&nbsp; [✨ Features](#-key-features) &nbsp;•&nbsp; [🔒 Lock File](#-plugin-lock-file) &nbsp;•&nbsp; [🧪 Tests](#-testing--quality-assurance)
+<sub>Real run: <code>--check --live</code> boots the server, proves Metamod 2.0 + CounterStrikeSharp + every plugin actually loaded, then shuts it down.</sub>
+
+<br><br>
+
+[⚡ Quick Start](#-quick-start) · [✨ Highlights](#-engineering-highlights) · [🧱 Architecture](#-architecture) · [🩺 Health Check](#-health-check) · [🔌 Plugins](#-plugins-github-or-local) · [🧪 Tests](#-testing)
 
 </div>
 
 ---
 
-## 📖 What Is This?
+## 📖 The problem
 
-Setting up a CS2 dedicated server is a multi-hour chore: download SteamCMD, install 30 GB of game files, manually patch `gameinfo.gi`, unzip Metamod and CounterStrikeSharp into the right folder structure, then hunt for each plugin's GitHub release. One wrong folder and nothing loads.
+Setting up a CS2 community server by hand takes hours. You download SteamCMD and pull 60+ GB of game files. You find the *right* Metamod build: GitHub's "latest" release is the Source 1 branch and silently does nothing on CS2. You patch `gameinfo.gi` and unzip CounterStrikeSharp into the correct tree. Then every plugin ships its ZIP in a different layout. One wrong folder and nothing loads, with no error on screen.
 
-This tool automates the entire pipeline — **idempotently**. Run it once to install. Run it again and every completed step is detected and skipped. Interrupted? Re-run and it picks up where it left off.
-
-Phase 2 goes further: every plugin install is preceded by an **atomic ZIP snapshot** of the addon tree. If the plugin breaks the server, one call restores the last known-good state. A **deterministic lock file** (`cs2-plugins.lock`) pins every installed plugin to its exact release URL, enabling a byte-for-byte server clone on any machine with `--restore`. A **pure-asyncio RCON client** lets you manage the live server — add admins, change maps, kick players — without restarting.
+**This tool automates the whole pipeline, idempotently.** Re-run it at any time: finished steps are detected from the filesystem and skipped. Then **`--check --live` proves the result**: it boots the real server and confirms every component loaded.
 
 ---
 
-## ✨ Key Features
+## ✨ Engineering highlights
 
-| Feature | Description |
+| | |
 |---|---|
-| 🚀 **One-command install** | SteamCMD → CS2 → Metamod → CSSharp → plugins, fully automated |
-| 📊 **Live progress bars** | SteamCMD stdout parsed line-by-line via async subprocess; download % displayed in real time |
-| 📦 **Smart Unzip engine** | Handles every GitHub ZIP layout without hardcoded assumptions |
-| 🔌 **Dynamic plugin UI** | Paste any `owner/repo` GitHub slug; latest release fetched, classified, and installed |
-| ♻️ **Idempotent pipeline** | Filesystem predicates are ground truth; safe to re-run at any time |
-| ⚛️ **Atomic state files** | `install_state.json` and `cs2-plugins.lock` written with `os.replace()` — never corrupt on crash |
-| 🛡️ **Snapshot & rollback** | ZIP backup taken before every plugin install; auto-rollback on failure |
-| 🔬 **Runtime verification** | Optional `--verify`: boots the server after each plugin install, scans live logs, auto-rolls back on confirmed load errors |
-| 🔒 **Plugin lock file** | Every install pinned by version, commit ref, and exact download URL |
-| 💾 **`--restore` mode** | Recreate a server's exact plugin set on any machine from `cs2-plugins.lock` |
-| 🔄 **`--update` mode** | Refreshes CS2 via SteamCMD and re-applies the gameinfo.gi patch that every game update wipes |
-| 🎛️ **Async RCON client** | Source RCON over pure asyncio — add admins, change maps, kick/ban, broadcast |
-| 🌐 **Server port config** | Custom game port injected into `start_server.bat`; router forwarding guide included |
-| 🗄️ **MySQL auto-binding** | `databases.json` auto-generated for CounterStrikeSharp plugin SQL connectivity |
+| ⚙️ **Async orchestration** | A 9-phase `asyncio` pipeline. SteamCMD output is streamed line by line into live progress bars; downloads are chunk-streamed with `httpx`. |
+| 📦 **Smart Unzip classifier** | A pure function inspects a ZIP's `namelist()` **before extracting a byte** and routes it as DIRECT / WRAPPER / FLAT, so no layout is hardcoded per plugin. |
+| 🧭 **Engine-aware installs** | Picks Windows assets over Linux ones and renames plugin folders to match the assembly (`plugins/X/X.dll`), the rule CounterStrikeSharp silently enforces. |
+| 🛡️ **Self-healing** | Atomic ZIP snapshot before every plugin; automatic rollback on failure; a Windows file-handle backoff ladder for locked DLLs. |
+| 🔬 **Runtime verification** | Boots `cs2.exe`, polls a hand-written **Source RCON** client until ready, scans only the log bytes produced by this boot, and rolls back on confirmed errors only. |
+| 🩺 **Health check** | `--check` (static, seconds) + `--live` (real boot). It caught real bugs during development: a Source 1 Metamod build, a SourceHook ABI mismatch and misnamed plugin folders. |
+| 🔒 **Reproducible servers** | `cs2-plugins.lock` pins every plugin by version, commit and URL; `--restore` rebuilds an identical plugin set anywhere. |
+| ⚛️ **Crash-safe state** | All state files are written via temp file + `os.replace()`, so a crash never leaves them half-written. |
+| 🧪 **Fully offline tests** | **260 tests, 88% coverage, < 1 s.** HTTP via `httpx.MockTransport`, RCON via asyncio stream fakes, process lifecycle via a scripted subprocess double. CI enforces ≥ 80%. |
 
 ---
 
 ## 🧱 Architecture
 
-```
-cs2_server_creator/
-│
-├── main.py                   ← Thin async orchestrator (phases 0-9, no business logic)
-│
-├── core/
-│   ├── mod_manager.py        ← GitHub API + Smart Unzip engine  ★ centrepiece
-│   ├── snapshot.py           ← Atomic ZIP backup + rollback engine
-│   ├── lock_manager.py       ← cs2-plugins.lock read/write (StateManager pattern)
-│   ├── rcon_manager.py       ← Source RCON wire protocol over asyncio TCP
-│   ├── steamcmd_wrapper.py   ← Async subprocess wrapper, progress regex parser
-│   ├── config_patcher.py     ← Idempotent gameinfo.gi patch, bat/cfg writer
-│   └── validator.py          ← Filesystem predicates + install_state.json state machine
-│
-├── cli/
-│   └── app.py                ← Rich UI: banner, prompts, plugin manager, progress bars
-│
-├── models/
-│   └── schemas.py            ← Shared dataclasses and Enums (ZipCase, SnapshotMeta, …)
-│
-└── utils/
-    └── http_client.py        ← httpx.AsyncClient factory, tenacity retry decorator
+```mermaid
+flowchart LR
+    subgraph CLI["cli/app.py — Rich UI"]
+        P[Prompts & plugin manager]
+        PB[Live progress bars]
+    end
+    M["main.py<br/>async orchestrator"]
+    subgraph CORE["core/"]
+        SC[steamcmd_wrapper<br/>async subprocess]
+        MM[mod_manager<br/>GitHub API + Smart Unzip]
+        CP[config_patcher<br/>gameinfo.gi · bat · cfg]
+        SN[snapshot<br/>ZIP backup / rollback]
+        LK[lock_manager<br/>cs2-plugins.lock]
+        SV[server_controller<br/>boot · ready · stop]
+        RC[rcon_manager<br/>Source RCON over asyncio]
+        LV[log_validator<br/>baseline-scoped scan]
+        HC[health_check<br/>--check / --live]
+        VA[validator<br/>filesystem predicates]
+    end
+    P --> M --> SC & MM & CP & SN & LK
+    M --> SV --> RC
+    SV --> LV
+    HC --> VA & SV & RC
+    MM -->|GitHub Releases| GH[(GitHub)]
+    MM -->|Metamod 2.0 drops| AM[(AlliedModders)]
+    SC -->|app 730| ST[(Steam)]
 ```
 
-### Installation Pipeline (Phases 0 – 9)
+### Install pipeline
 
+```mermaid
+flowchart TD
+    A[Phase 0 · collect input] --> B{steamcmd.exe?}
+    B -- no --> B1[Download SteamCMD] --> C
+    B -- yes --> C{cs2.exe?}
+    C -- no --> C1[Install CS2 · live %] --> D
+    C -- yes --> D{Metamod 2.0<br/>CS2 loader?}
+    D -- "1.x found" --> D0[Remove stale binaries<br/>keep plugin .vdf files] --> D1
+    D -- no --> D1[Install Metamod 2.0] --> E
+    D -- yes --> E{CounterStrikeSharp?}
+    E -- "no / ABI refresh" --> E1[Install latest CSSharp + .NET] --> F
+    E -- yes --> F[Patch gameinfo.gi · idempotent]
+    F --> G[Write start_server.bat + server.cfg]
+    G --> H[[For each plugin:<br/>snapshot → install → verify → lock]]
+    H --> I[Summary]
 ```
-Phase 0  Collect all user input (GSLT, auth key, IP, RCON password, plugins)
-   │
-Phase 2  Download SteamCMD          ← skip if steamcmd.exe exists
-   │
-Phase 3  Install CS2 Server         ← skip if cs2.exe exists
-   │                                   async for event in install_cs2():
-   │                                       progress_bar.update(event.percent)
-Phase 4  Install Metamod            ← skip if addons/metamod/ exists
-   │
-Phase 5  Install CounterStrikeSharp ← skip if addons/counterstrikesharp/ exists
-   │
-Phase 6  Patch gameinfo.gi          ← skip if "csgo/addons/metamod" already in file
-   │
-Phase 7  Write server configs        ← always (start_server.bat + server.cfg)
-   │
-Phase 8  Install user plugins        ← per-plugin:
-   │       ├─ take_snapshot(csgo_dir)           before install
-   │       ├─ install_mod(repo, target_dir)     GitHub API + Smart Unzip
-   │       ├─ lock_mgr.record(entry)            pin to cs2-plugins.lock
-   │       └─ snapshot.rollback(snap)           on failure — self-healing
-   │
-Phase 9  Summary table
+
+### Smart Unzip decision tree
+
+```mermaid
+flowchart TD
+    Z[ZIP namelist] --> Q1{"addons/ at root?"}
+    Q1 -- yes --> DIRECT["DIRECT<br/>extract into game/csgo/"]
+    Q1 -- no --> Q2{"exactly one folder<br/>and no root files?"}
+    Q2 -- yes --> WRAP["WRAPPER_FLATTEN<br/>strip MyPlugin-v1.2/ prefix"]
+    Q2 -- no --> Q3{".dll at root?"}
+    Q3 -- yes --> FLAT["FLAT_DLL<br/>extract into plugins/Name/"]
+    Q3 -- no --> AMB["AMBIGUOUS<br/>raise with namelist"]
+    WRAP & FLAT --> AL["align folder to assembly<br/>X.deps.json + X.dll → plugins/X/"]
 ```
 
 ---
 
-## 📦 Smart Unzip Engine
-
-Every GitHub plugin release uses a different ZIP layout. The engine inspects `namelist()` **before extracting a single byte**, classifies the structure, and applies the correct strategy.
-
-```
-ZIP received
-     │
-     ▼
-Is "addons/" a top-level entry?
-     │
-    YES ──────────────────────────────► CASE A: DIRECT
-     │                                  Extract as-is → game/csgo/
-     │                                  Used by: Metamod, CounterStrikeSharp
-    NO
-     │
-     ▼
-Is there exactly ONE real directory at root?
-     │
-    YES ──────────────────────────────► CASE B: WRAPPER FLATTEN
-     │                                  Strip "PluginName-v1.2/" prefix from every path
-     │                                  Write via zip.open() pipe — no temp directory
-     │                                  Used by: most GitHub plugin releases
-    NO
-     │
-     ▼
-Are there .dll files directly at root?
-     │
-    YES ──────────────────────────────► CASE C: FLAT DLL
-     │                                  Extract directly into plugin target folder
-     │                                  Used by: simple single-file plugins
-    NO
-     │
-     ▼
-     AMBIGUOUS ──────────────────────► Raise UnrecognizedZipStructureError
-                                        (includes full namelist in message)
-```
-
-> **Why no intermediate temp directory for WRAPPER FLATTEN?**
-> Each member is read via `zipfile.open(info)` and piped directly to the destination `Path.open('wb')`. This halves disk I/O and is faster on large plugin packages.
-
----
-
-## 🛡️ Snapshot & Rollback (Self-Healing)
-
-Before every plugin install, the engine takes an **atomic ZIP snapshot** of `game/csgo/addons/` and `game/csgo/cfg/`. If the install fails — broken archive, bad ZIP structure, network drop — the system rolls back to the pre-install state in under a second.
-
-```
-Phase 8: plugin install loop
-     │
-     ├─ take_snapshot(csgo_dir, .snapshots/, label="before_PluginName")
-     │     ZIP of addons/ + cfg/ → .snapshots/20250705T123456_before_PluginName.zip
-     │     Companion .json written atomically (os.replace)
-     │
-     ├─ install_mod(...)   ──► SUCCESS → record to cs2-plugins.lock
-     │
-     └─ install_mod(...)   ──► FAILURE
-           │
-           └─ snapshot.rollback(snap, csgo_dir)
-                 shutil.rmtree(addons/, cfg/)
-                 zipfile.extractall(csgo_dir)
-                 console: "Rolled back to 20250705T123456_before_PluginName"
-```
-
-Only the last **5 snapshots** are kept on disk. `cleanup_old_snapshots()` runs automatically after each new snapshot.
-
----
-
-## 🔬 Runtime Verification (`--verify`)
-
-Files on disk don't prove a plugin actually loads. With verification enabled (a y/N prompt during setup, or the `--verify` flag), every plugin install is validated against the real Source engine runtime:
-
-```
-install_mod(...)  ──►  SUCCESS on disk
-     │
-     ├─ RCON pre-probe               a server already on the port? → skip launch, warn
-     ├─ capture_baseline()           console.log byte offset + timestamp
-     ├─ launch cs2.exe -condebug     direct subprocess, stdio silenced
-     ├─ wait_until_ready()           poll RCON until the server answers (or timeout)
-     ├─ stop()                       RCON quit → terminate → kill escalation
-     └─ scan_runtime_logs()          console.log tail + fresh CSSharp log files
-              │
-              ├─ load signature, no errors  → verified ✓  → record to lock file
-              ├─ error signatures found     → rollback_with_retry() → snapshot restored,
-              │                               NOT recorded to lock file
-              └─ inconclusive               → yellow warning, install kept
-```
-
-Design guarantees:
-
-- **Evidence-based rollback only.** A rollback fires solely on confirmed error signatures (`Exception`, `Failed to load plugin`, bracketed `[Error]` tags from CSSharp). A boot timeout or missing logs never destroys a healthy install.
-- **Baseline scoping.** Only log content produced *after* the install is scanned — console.log is read from a byte offset, CSSharp log files are gated by mtime. Errors from last week's session can't fail today's plugin.
-- **Windows file-handle backoff.** The OS can hold DLL locks for a few hundred milliseconds after process exit; rollback retries on a 0.2s/0.5s/1.0s ladder before reporting failure.
-- **Port-collision safety.** If a live server already answers RCON on the target port, no second `cs2.exe` is ever launched.
-
----
-
-## 🔒 Plugin Lock File
-
-Every successful plugin install is recorded in `cs2-plugins.lock` with its exact GitHub release metadata:
-
-```json
-{
-  "schema_version": 1,
-  "entries": {
-    "cssjunkie/SomePlugin": {
-      "owner": "cssjunkie",
-      "repo": "SomePlugin",
-      "version": "v1.4.2",
-      "commit_ref": "main",
-      "download_url": "https://github.com/cssjunkie/SomePlugin/releases/download/v1.4.2/SomePlugin.zip",
-      "asset_keyword": null,
-      "installed_at": "2025-07-05T12:34:56Z"
-    }
-  }
-}
-```
-
-### Restoring a Server from the Lock File
+## ⚡ Quick start
 
 ```bash
-python main.py --restore
+git clone https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator.git
+cd Cs2_AwpLego_Server_Creator
+pip install -r requirements.txt
+
+python main.py                      # interactive full install
 ```
 
-The `--restore` flag bypasses the installer entirely. It reads every entry from `cs2-plugins.lock`, downloads each plugin from its **pinned URL** (no GitHub API lookup), and reinstalls them into the correct directories. The result is a byte-for-byte identical plugin set — on any machine, any VPS, any Docker container.
+| Command | What it does |
+|---|---|
+| `python main.py` | Full install: SteamCMD → CS2 → Metamod 2.0 → CounterStrikeSharp → configs → plugins |
+| `python main.py --verify` | Same, and boots the server after each plugin to prove it loads (auto-rollback on errors) |
+| `python main.py --add-plugin <repo \| URL \| path> --dir <server>` | Add plugins to an existing server, no prompts (repeatable) |
+| `python main.py --check --dir <server>` | Static health check, read-only, in seconds |
+| `python main.py --check --live --dir <server>` | Boot the server and confirm Metamod, CSSharp and every plugin loaded |
+| `python main.py --update --dir <server>` | Update CS2 via SteamCMD and re-apply the `gameinfo.gi` patch that updates wipe |
+| `python main.py --restore` | Reinstall the exact plugin set pinned in `cs2-plugins.lock` |
+
+The interactive installer asks for: install directory, Steam GSLT + Web API key, IP / port / map, RCON password, optional MySQL, and plugins.
 
 ---
 
-## 🎛️ RCON Manager
+## 🩺 Health check
 
-`core/rcon_manager.py` implements the **Source RCON wire protocol** over a pure `asyncio` TCP socket — no external dependencies.
+<img src="docs/media/check.svg" alt="Static and live health check output" width="800">
+
+**`--check`** reads files only:
+- CS2 build and Steam state.
+- Metamod **2.0** (the CS2 loader, not the Source 1-only 1.x build).
+- CounterStrikeSharp, its `.NET` runtime and its Metamod registration.
+- The `gameinfo.gi` patch.
+- `start_server.bat` flags (loopback IP, legacy RCON flag, missing GSLT).
+- Plugin folders.
+
+**`--live`** additionally boots the server with the settings from `start_server.bat`:
+1. Waits for RCON.
+2. Asks `meta version` and `css_plugins list`.
+3. Cross-checks the console and CSSharp logs written **during this boot only**.
+4. Names any plugin that is installed but did not load.
+5. Shuts the server down.
+
+The exit code is `1` on any failure, so it drops straight into scripts and CI.
+
+---
+
+## 🔌 Plugins: GitHub or local
+
+<img src="docs/media/plugins.svg" alt="Plugin manager with GitHub and local plugins and the install summary" width="800">
+
+| Source | Example |
+|---|---|
+| GitHub slug | `XBribo/CS2-Bot-Hider` |
+| GitHub URL | `https://github.com/ed0ard/CS2-Bot-Randomizer` |
+| Local folder or `.zip` | `D:\Downloads\AutoRestart` (type it, drag & drop it, or press **[L]** for a file picker) |
+
+GitHub plugins resolve to the **latest release**: the Windows asset is preferred over Linux, the release is recorded in the lock file, and it is restorable with `--restore`. Local plugins go through the **same classifier and routing**, so they land exactly where a GitHub install would. Every install is wrapped in a snapshot and rolls back on failure.
+
+```bash
+python main.py --dir C:\cs2\server \
+  --add-plugin https://github.com/ed0ard/CS2-Bot-Randomizer \
+  --add-plugin XBribo/CS2-Bot-Hider
+python main.py --dir C:\cs2\server --add-plugin "D:\Downloads\AutoRestart"
+python main.py --dir C:\cs2\server --check --live   # → All loaded: AutoRestart, BotHiderImpl, BotRandomizer
+```
+
+---
+
+## 🔬 Runtime verification
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant I as Installer
+    participant S as Snapshot
+    participant C as cs2.exe
+    participant R as RCON client
+    participant L as Log scanner
+    I->>S: take_snapshot(addons/, cfg/)
+    I->>I: install plugin (classify → route → extract)
+    I->>L: capture_baseline (console.log offset)
+    I->>C: launch -condebug
+    loop until ready / timeout
+        R->>C: AUTH
+    end
+    I->>C: quit → terminate → kill ladder
+    I->>L: scan only bytes written this boot
+    alt error signatures
+        I->>S: rollback_with_retry (0.2s / 0.5s / 1.0s)
+    else clean or inconclusive
+        I->>I: record to cs2-plugins.lock
+    end
+```
+
+- **Rollback only on evidence.** Rollback happens only on confirmed signatures (`Exception`, `Failed to load plugin`, `[Error]`). A timeout never destroys a healthy install.
+- **Baseline scoping.** Only log output from this boot is scanned. `console.log` is read from the first Game search path, which becomes `csgo/addons/metamod/` once Metamod is hooked.
+- **Port-collision safety.** If a server already answers RCON on the port, no second `cs2.exe` is launched.
+
+---
+
+## 🎛️ Async RCON client
+
+A dependency-free implementation of the Source RCON wire protocol over `asyncio` TCP:
 
 ```python
 async with RCONClient(host="127.0.0.1", port=27015, password="secret") as rcon:
     await rcon.add_admin("76561198000000000", "@css/root")
     await rcon.change_map("de_mirage")
-    await rcon.broadcast("Server will restart in 5 minutes.")
-    await rcon.kick_player("griefer", "Unsportsmanlike conduct")
-    await rcon.ban_player("76561198000000001", duration_minutes=60)
+    await rcon.broadcast("Restart in 5 minutes.")
 ```
 
-The RCON password is set during the install prompt and injected into `start_server.bat` via `-rcon_password`. The server starts RCON-ready on first boot.
-
-### Packet format
-
 ```
-[int32 LE] size  = body_length + 10
-[int32 LE] id    = arbitrary positive int (matched in response)
-[int32 LE] type  = 3 (AUTH) | 2 (EXECCOMMAND) | 0 (RESPONSE_VALUE)
-[bytes]    body  = UTF-8, null-terminated
-[byte]     0x00  = empty string terminator
+[int32 LE] size = len(body) + 10 │ [int32 LE] id │ [int32 LE] type (3 AUTH · 2 EXEC · 0 RESPONSE) │ body\0 │ \0
 ```
-
-All I/O is wrapped in `asyncio.wait_for(..., timeout)`. Authentication failure raises `RCONAuthError`; connection failure raises `RCONConnectionError`.
 
 ---
 
-## 🌐 Network & Port Forwarding
-
-> **Required for public servers.** Players cannot connect if the game port is blocked by your router or Windows Firewall.
-
-### Windows Firewall Rules
-
-Run these two commands as **Administrator** to open the required ports:
-
-```cmd
-:: Game port — UDP (player traffic)
-netsh advfirewall firewall add rule name="CS2 Server UDP" protocol=UDP dir=in localport=27015 action=allow
-
-:: RCON port — TCP (remote console)
-netsh advfirewall firewall add rule name="CS2 Server TCP" protocol=TCP dir=in localport=27015 action=allow
-```
-
-Replace `27015` with your chosen port if you changed the default during setup.
-
-### Router / Port Forwarding
-
-1. Open your router admin panel — typically `192.168.1.1` or `192.168.0.1`.
-2. Navigate to **Port Forwarding** (also called **Virtual Server** or **NAT** depending on the firmware).
-3. Create two rules pointing to your server machine's **local IP address**:
-
-| Rule | Protocol | External Port | Internal Port |
-|------|----------|---------------|---------------|
-| CS2 Game | **UDP** | 27015 | 27015 |
-| CS2 RCON | **TCP** | 27015 | 27015 |
-
-4. Save and apply. Restart the router if prompted.
-5. After starting the server, verify the port is reachable using [canyouseeme.org](https://canyouseeme.org).
-
-> The port you choose during the installer prompt is injected automatically into `start_server.bat` via `-port`. No manual editing required.
-
----
-
-## 🗄️ Database Integration & Plugin Binding
-
-Many CounterStrikeSharp plugins — **Ranks, VIP tiers, Stats, Bans** — require a MySQL database to persist player data across map changes and server restarts. Without a valid `databases.json`, these plugins either silently fail to load or crash with a connection error on startup.
-
-### How It Works
-
-During setup, the installer presents an optional prompt:
-
-```
-Configure MySQL database for CSSharp plugins? [y/N]:
-```
-
-If you answer `y`, the tool collects your credentials and atomically writes:
-
-```
-game/csgo/addons/counterstrikesharp/configs/databases.json
-```
-
-with the standard CSSharp connection block:
+## 🔒 Lock file & restore
 
 ```json
 {
-  "default": {
-    "Host": "127.0.0.1",
-    "Port": 3306,
-    "User": "root",
-    "Password": "your_password",
-    "Database": "cs2_server"
+  "schema_version": 1,
+  "entries": {
+    "XBribo/CS2-Bot-Hider": {
+      "owner": "XBribo",
+      "repo": "CS2-Bot-Hider",
+      "version": "v0.5.1",
+      "commit_ref": "12069c25a756deedc72f8fc116ac3b18045d1223",
+      "download_url": "https://github.com/XBribo/CS2-Bot-Hider/releases/download/v0.5.1/BotHider-Windows-0.5.1.zip",
+      "asset_keyword": null,
+      "installed_at": "2026-10-15T13:32:37.721578Z"
+    }
   }
 }
 ```
 
-Every SQL-dependent plugin that follows the CSSharp convention reads the `"default"` key at startup. No plugin-by-plugin configuration is required — one file binds all of them.
-
-### XAMPP Setup (Quickest Path on Windows)
-
-If you don't already have a MySQL server, [XAMPP](https://www.apachefriends.org/download.html) bundles everything you need in one installer.
-
-1. Download and install XAMPP.
-2. Open the **XAMPP Control Panel** (`xampp-control.exe`).
-3. Click **Start** next to two services:
-   - **MySQL** — the database engine your CSSharp plugins will connect to.
-   - **Apache** — required only if you want to manage the database via **phpMyAdmin** in your browser at `http://localhost/phpmyadmin`.
-4. Both service indicators should turn green. If MySQL fails to start, port `3306` is likely already in use — stop the conflicting service (usually another MySQL install) and click Start again.
-5. Default XAMPP credentials for the installer prompt:
-   - Host: `127.0.0.1`
-   - Port: `3306`
-   - Username: `root`
-   - Password: *(leave empty — XAMPP ships with a blank root password by default)*
-   - Database: `cs2_server`
-
-> **Security note:** The blank root password is fine for local development but a serious risk if the port is exposed. Set a password via phpMyAdmin → **User accounts** → **Edit privileges** on `root@localhost` before opening `3306` to the internet.
-
-### HeidiSQL / phpMyAdmin Setup
-
-1. Install [HeidiSQL](https://www.heidisql.com/) (Windows, free) or use phpMyAdmin (bundled with XAMPP, or standalone on a VPS).
-2. Connect to your MySQL instance (default: `127.0.0.1:3306`, user `root`).
-3. Create a database matching the name you entered in the installer prompt (e.g. `cs2_server`).
-4. Start the server — each plugin creates its own tables on first load. No manual schema imports.
-5. If the database runs on a remote host, restrict port `3306` to your server's IP in your firewall rules to prevent unauthorized access.
-
-> **Skip database:** Press Enter at the prompt (default `N`) to skip. No `databases.json` is created and no DB-dependent plugin will attempt to connect.
+`python main.py --restore` reinstalls every entry from its **pinned URL** (no "latest" lookup), producing an identical plugin set on any machine.
 
 ---
 
-## 💡 Why the Hybrid Model?
+## 🧪 Testing
 
-Most server setup guides are either:
-- **Pure shell scripts** — fast but brittle, break on any version change
-- **Docker images** — portable but opaque, hard to customise
+```bash
+pytest --cov=core --cov=models --cov-report=term-missing
+```
 
-This tool uses a **pre-seeding + async log-tailing hybrid**:
+- **260 tests in under a second, fully offline.** No network, no sockets, no real processes.
+- **Covered areas:**
+  - The Smart Unzip decision tree, including real-world regressions (a `lang/` folder next to the DLLs, a Linux asset listed first, a repo name ≠ assembly name).
+  - The GitHub resolver and the Metamod 2.0 drop-server resolver.
+  - Streaming downloads and snapshot rollback.
+  - The RCON wire codec and timeouts.
+  - The process shutdown escalation ladder and baseline-scoped log scanning.
+  - Static and live health checks.
+- **CI** (GitHub Actions) fails under 80% coverage. Current: **88%**.
 
-1. **Pre-seeding:** All configuration and plugin files are placed on disk *before* the server ever starts. The server boots correctly on its first launch, with no "restart to apply changes" loop.
+| Module | Coverage |
+|---|---|
+| `models/schemas.py` | 98% |
+| `core/log_validator.py` | 94% |
+| `core/rcon_manager.py` | 94% |
+| `core/server_controller.py` | 94% |
+| `core/mod_manager.py` | 92% |
+| `core/health_check.py` | 87% |
 
-2. **Async log tailing:** Python reads the subprocess stdout as an async stream. The event loop stays free, so the UI stays responsive, and progress values are parsed from real data — not fake timers.
-
-3. **SaaS-ready design:** The same pipeline can run inside a Docker container on a VPS. Add a `--steam-id` flag, wire up a billing webhook, and you have a "one-click CS2 server" SaaS. The architecture was designed with this extension in mind from day one.
+README media is generated from a real install by [`docs/media/render.py`](docs/media/render.py), with paths anonymized.
 
 ---
 
 ## 📋 Requirements
 
 - Python 3.10+
-- Windows (for the CS2 dedicated server binary; the Python code is OS-agnostic)
-- A Steam [Game Server Login Token](https://steamcommunity.com/dev/managegameservers) (GSLT)
-- A Steam [Web API Key](https://steamcommunity.com/dev/apikey)
+- Windows (the CS2 dedicated server binary); the Python code itself is OS-agnostic
+- A Steam [Game Server Login Token](https://steamcommunity.com/dev/managegameservers) (GSLT) and [Web API key](https://steamcommunity.com/dev/apikey)
 
----
+<details>
+<summary><b>🌐 Network & port forwarding</b></summary>
 
-## ⚡ Quick Start
+<br>
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator.git
-cd Cs2_AwpLego_Server_Creator
+Open the game port (default `27015`) as Administrator:
 
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Run
-python main.py
-
-# 3b. Run with runtime verification (launches the server after each plugin install)
-python main.py --verify
-
-# 3c. Update an existing server after a CS2 patch (re-applies the Metamod hook)
-python main.py --update
-
-# 4. Restore an existing plugin set on a new machine
-python main.py --restore
-
-# 5. Health-check an existing install without reinstalling anything
-python main.py --check --dir "C:\cs2\my_server"
-python main.py --check --live --dir "C:\cs2\my_server"   # also boots the server
+```cmd
+netsh advfirewall firewall add rule name="CS2 Server UDP" protocol=UDP dir=in localport=27015 action=allow
+netsh advfirewall firewall add rule name="CS2 Server TCP" protocol=TCP dir=in localport=27015 action=allow
 ```
 
-`--check` only reads files (seconds): CS2 build, Metamod **2.0** (CS2 loader
-present, not the Source 1-only 1.x build), CounterStrikeSharp + its Metamod
-registration, the `gameinfo.gi` patch, `start_server.bat` flags and plugin
-folders. `--live` then boots the server from the settings in `start_server.bat`,
-asks `meta version` / `css_plugins list` over RCON (falling back to the boot
-logs), and shuts it down. Exit code is `1` when any check fails.
+Forward UDP + TCP `27015` on your router to the server's LAN IP. Use `0.0.0.0` or the LAN IP as the server IP; `127.0.0.1` only accepts local connections (`--check` warns about this).
 
-The tool will prompt you for:
-- Installation directory (default: `~/cs2_server`)
-- Steam GSLT token and Web API key
-- Server IP, **server port** (default: `27015`), and default map
-- **RCON password** (written into `start_server.bat`; used by `RCONClient`)
-- **MySQL database** (optional — generates `databases.json` for CSSharp plugin SQL binding)
-- Any CounterStrikeSharp plugins you want installed
+</details>
 
----
+<details>
+<summary><b>🗄️ MySQL for plugins (Ranks, VIP, Stats, Bans)</b></summary>
 
-## 🩺 Troubleshooting
+<br>
+
+Answer `y` at the database prompt and the tool atomically writes `addons/counterstrikesharp/configs/databases.json`:
+
+```json
+{ "default": { "Host": "127.0.0.1", "Port": 3306, "User": "root", "Password": "…", "Database": "cs2_server" } }
+```
+
+Every CSSharp plugin that follows the convention reads the `"default"` key. The quickest local setup is [XAMPP](https://www.apachefriends.org/): start MySQL and create the database. Set a root password before exposing port 3306.
+
+</details>
+
+<details>
+<summary><b>🩹 Troubleshooting</b></summary>
+
+<br>
 
 | Symptom | Cause & fix |
 |---|---|
-| Window title shows **"Select …"** and nothing responds | Clicking inside a classic CMD window activates QuickEdit selection, which **pauses the app**. Press `Esc` (or `Enter`) to resume. |
-| Can't paste a token into a prompt | In classic CMD paste with **right-click**; `Ctrl+V` only works in Windows Terminal. All prompts use visible input so you can verify what landed. |
-| "Install CS2 Server" sits at 0% | SteamCMD's self-update, login, and ~33 GB disk pre-allocation emit no percentages. Watch the dim status line next to the task — as long as it changes, the install is alive. |
+| Window title shows **"Select …"** and nothing responds | QuickEdit mode paused the console. Press `Esc`. |
+| Can't paste a token | In classic CMD, paste with **right-click**. |
+| "Install CS2 Server" sits at 0% | SteamCMD's self-update and disk pre-allocation print no percentages. Watch the dim status line. |
+| `--check --live`: *CounterStrikeSharp rejected (old SourceHook)* | CSSharp is older than Metamod. Re-run the installer, which refreshes it. |
+| `--check --live`: *Installed but not loaded: X* | Check `addons/counterstrikesharp/logs/` for X's exception (usually an API-version mismatch). |
+
+</details>
 
 ---
 
-## 🔌 Adding Plugins at Runtime
+## 🧰 Tech stack
 
-In the plugin manager screen, enter any GitHub repo in either format:
-
-```
-owner/repo
-https://github.com/owner/repo
-```
-
-The tool fetches the **latest release** automatically, takes a snapshot, classifies the ZIP layout, installs it, and records the exact version to `cs2-plugins.lock`:
-
-```
-game/csgo/addons/counterstrikesharp/plugins/<PluginName>/
-```
-
-No hardcoded plugin names. No hardcoded URLs. Zero manual file management. Full rollback on failure.
-
----
-
-## 🧰 Tech Stack
-
-| Library | Role |
-|---|---|
-| [`httpx`](https://www.python-httpx.org/) | Async HTTP client; streams large downloads in chunks |
-| [`rich`](https://rich.readthedocs.io/) | Terminal UI — progress bars, panels, tables, prompts |
-| [`tenacity`](https://tenacity.readthedocs.io/) | Retry with exponential backoff for GitHub API calls |
-| `asyncio` | Non-blocking subprocess for SteamCMD; async download streaming; RCON TCP client |
-| `zipfile` | ZIP inspection, extraction, and snapshot archiving (stdlib) |
-| `struct` | Source RCON binary packet encoding/decoding (stdlib) |
-
----
-
-## ♻️ Idempotency & State
-
-Every step is gated by a **filesystem predicate** — the actual files on disk are always the source of truth.
-
-```python
-# gameinfo.gi is never patched twice
-def is_gameinfo_patched(csgo_dir: Path) -> bool:
-    content = (csgo_dir / "gameinfo.gi").read_text(encoding="utf-8")
-    return "csgo/addons/metamod" in content
-```
-
-Two companion files track state:
-
-| File | Purpose |
-|---|---|
-| `install_state.json` | Per-phase completion timestamps and versions |
-| `cs2-plugins.lock` | Per-plugin exact version, commit ref, and download URL |
-
-Both are written atomically with `os.replace()`. Delete either to force a re-check — nothing breaks.
-
----
-
-## 🧪 Testing & Quality Assurance
-
-The entire suite runs **fully offline** — zero network calls, zero real sockets, zero real processes. Async HTTP is intercepted with `httpx.MockTransport`; the RCON TCP layer is driven by hand-written `asyncio` stream fakes; the server process lifecycle is exercised against a scripted subprocess double, so even the terminate/kill escalation ladder is tested without ever launching a binary. Every async test is dispatched through `asyncio.run()`, so no extra plugins (`pytest-asyncio`, `respx`) are required — and the whole suite finishes in well under a second.
-
-```bash
-pip install -r requirements.txt
-pytest --cov=core --cov=models --cov-report=term-missing
-```
-
-| Module | Coverage |
-|---|---|
-| `models/schemas.py` | 98% |
-| `core/rcon_manager.py` | 94% |
-| `core/log_validator.py` | 94% |
-| `core/server_controller.py` | 94% |
-| `core/mod_manager.py` | 92% |
-| `core/lock_manager.py` | 85% |
-| **Total** | **86%** |
-
-**206 tests** cover the Smart Unzip decision tree, the GitHub API resolver (asset selection, 403/404, malformed and non-dict JSON), streaming downloads with progress callbacks and write-error cleanup, the full `install_mod` pipeline including snapshot rollback and the DIRECT-layout routing regression, the Source RCON wire codec — pack/parse round-trips, auth success and failure, connect/send/receive timeouts, malformed framing, every convenience command — the entire runtime verification layer (baseline-scoped log scanning, false-positive guards, the shutdown escalation ladder, port-collision probing, the Windows file-handle backoff around rollback), plus the lifecycle hardening: SteamCMD's self-update retry ladder, the disk-space preflight, and batch-safety input validation. Coverage is enforced in CI at 80%; new code has landed above that bar every phase, so the total keeps drifting upward instead of eroding.
-
----
+**Python 3.10+** · `asyncio` · [`httpx`](https://www.python-httpx.org/) (async streaming HTTP) · [`rich`](https://rich.readthedocs.io/) (terminal UI) · [`tenacity`](https://tenacity.readthedocs.io/) (retry/backoff) · `zipfile` · `struct` · `pytest` + `pytest-cov` · GitHub Actions
 
 ## 📄 License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
----
-
-<div align="center">
-
-# 🎮 CS2 Otomatik Sunucu Kurulum ve Yönetim Aracı
-
-**Tek komutla, mod ve eklentileriyle, canlı RCON kontrolüyle, otomatik yedeklerle ve deterministik restore ile eksiksiz bir CS2 dedicated sunucu kur.**
-
-<br>
-
-**[🇬🇧 English](#-what-is-this)** &nbsp;·&nbsp; **[⚡ Hızlı Başlangıç](#-hızlı-başlangıç)** &nbsp;·&nbsp; **[✨ Özellikler](#-öne-çıkan-özellikler)** &nbsp;·&nbsp; **[🧪 Testler](#-test--kalite-güvencesi)**
-
-</div>
-
----
-
-## 📖 Bu Nedir?
-
-CS2 dedicated sunucu kurmak saatler süren bir iş: SteamCMD indir, 30 GB oyun dosyasını yükle, `gameinfo.gi`'yi manuel düzenle, Metamod ve CounterStrikeSharp'ı doğru klasör yapısına çıkar, her eklentinin GitHub release'ini bul... Bir klasör yanlış giderse hiçbir şey çalışmaz.
-
-Bu araç **tüm pipeline'ı otomatik ve idempotent** olarak yönetir. Bir kere çalıştır, kurulumu tamamlar. Tekrar çalıştır — tamamlanan adımları algılar ve atlar. Yarıda mı kesildi? Tekrar çalıştır, kaldığı yerden devam eder.
-
-**Faz 2** ile araç artık sadece bir installer değil, kurumsal bir DevOps platformu: Her eklenti kurulumundan önce **atomik ZIP snapshot** alınır. Bir eklenti sunucuyu bozarsa, sistem tek çağrıyla son çalışan duruma döner. **Deterministik kilit dosyası** (`cs2-plugins.lock`) her eklentiyi tam sürüm URL'siyle sabitler — `--restore` ile herhangi bir makinede birebir aynı sunucu klonu saniyeler içinde kurulur. **Pure asyncio RCON istemcisi** ile canlı sunucuya bağlanıp admin ekleyebilir, harita değiştirebilir, oyuncu yönetimi yapabilirsin.
-
----
-
-## ✨ Öne Çıkan Özellikler
-
-| Özellik | Açıklama |
-|---|---|
-| 🚀 **Tek komut kurulum** | SteamCMD → CS2 → Metamod → CSSharp → eklentiler, tam otomatik |
-| 📊 **Canlı ilerleme çubukları** | SteamCMD stdout'u async subprocess ile satır satır okunur; indirme yüzdesi gerçek zamanlı gösterilir |
-| 📦 **Akıllı Zip Çıkarma** | Her GitHub ZIP yapısını varsayım olmadan yönetir |
-| 🔌 **Dinamik eklenti arayüzü** | Herhangi bir `owner/repo` GitHub adresi gir; en son sürüm otomatik indirilip kurulur |
-| ♻️ **Idempotent pipeline** | Her adım çalışmadan önce dosya sistemi kontrol eder; istediğin zaman güvenle tekrar çalıştır |
-| ⚛️ **Atomik durum dosyaları** | `install_state.json` ve `cs2-plugins.lock`, `os.replace()` ile yazılır — kilitlenme durumunda asla bozulmaz |
-| 🛡️ **Snapshot ve Rollback** | Her eklenti kurulumundan önce ZIP yedeği alınır; kurulum başarısız olursa otomatik geri dönüş |
-| 🔬 **Runtime doğrulama** | Opsiyonel `--verify`: her eklenti kurulumundan sonra sunucuyu başlatır, canlı logları tarar, doğrulanmış yükleme hatasında otomatik rollback yapar |
-| 🔒 **Eklenti kilit dosyası** | Her kurulum sürüm, commit ve tam URL ile `cs2-plugins.lock`'a kaydedilir |
-| 💾 **`--restore` modu** | `cs2-plugins.lock` dosyasından sunucunun birebir aynı eklenti setini herhangi bir makinede kur |
-| 🔄 **`--update` modu** | CS2'yi SteamCMD ile günceller ve her oyun güncellemesinin sildiği gameinfo.gi yamasını yeniden uygular |
-| 🎛️ **Async RCON istemcisi** | Pure asyncio üzerinde Source RCON protokolü — admin ekle, harita değiştir, kick/ban, duyuru |
-| 🌐 **Sunucu port yapılandırması** | Seçilen port `start_server.bat`'a `-port` ile enjekte edilir; router yönlendirme rehberi dahil |
-| 🗄️ **MySQL otomatik bağlama** | CounterStrikeSharp eklentileri için `databases.json` otomatik üretilir |
-
----
-
-## 🧱 Mimari
-
-```
-cs2_server_creator/
-│
-├── main.py                   ← İnce async orkestratör (faz 0-9, iş mantığı yok)
-│
-├── core/
-│   ├── mod_manager.py        ← GitHub API + Akıllı Zip Çıkarma Motoru  ★ kalp
-│   ├── snapshot.py           ← Atomik ZIP yedekleme + rollback motoru
-│   ├── lock_manager.py       ← cs2-plugins.lock okuma/yazma (StateManager deseni)
-│   ├── rcon_manager.py       ← asyncio TCP üzerinde Source RCON wire protokolü
-│   ├── steamcmd_wrapper.py   ← Async subprocess sarmalayıcı, ilerleme regex ayrıştırıcı
-│   ├── config_patcher.py     ← Idempotent gameinfo.gi yamalaması, bat/cfg yazıcı
-│   └── validator.py          ← Dosya sistemi predikatları + install_state.json durum makinesi
-│
-├── cli/
-│   └── app.py                ← Rich arayüz: banner, promptlar, eklenti yöneticisi, ilerleme çubukları
-│
-├── models/
-│   └── schemas.py            ← Paylaşılan dataclass ve Enum'lar (ZipCase, SnapshotMeta, …)
-│
-└── utils/
-    └── http_client.py        ← httpx.AsyncClient fabrikası, tenacity yeniden deneme dekoratörü
-```
-
-### Kurulum Pipeline'ı (Faz 0 – 9)
-
-```
-Faz 0  Tüm kullanıcı girdisi (GSLT, auth key, IP, RCON şifresi, eklentiler)
-   │
-Faz 2  SteamCMD İndir         ← steamcmd.exe varsa atla
-   │
-Faz 3  CS2 Sunucu Kur         ← cs2.exe varsa atla
-   │                              async for event in install_cs2():
-   │                                  progress_bar.update(event.percent)
-Faz 4  Metamod Kur            ← addons/metamod/ varsa atla
-   │
-Faz 5  CounterStrikeSharp Kur ← addons/counterstrikesharp/ varsa atla
-   │
-Faz 6  gameinfo.gi Yama       ← "csgo/addons/metamod" zaten dosyada varsa atla
-   │
-Faz 7  Sunucu Konfigürasyonu  ← her zaman (start_server.bat + server.cfg)
-   │
-Faz 8  Kullanıcı Eklentileri  ← eklenti başına:
-   │       ├─ take_snapshot(csgo_dir)          kurulumdan önce yedek al
-   │       ├─ install_mod(repo, target_dir)    GitHub API + Akıllı Zip
-   │       ├─ lock_mgr.record(entry)           cs2-plugins.lock'a kaydet
-   │       └─ snapshot.rollback(snap)          hata durumunda — self-healing
-   │
-Faz 9  Özet tablosu
-```
-
----
-
-## 📦 Akıllı Zip Çıkarma Motoru
-
-Her GitHub eklenti release'i farklı bir ZIP yapısı kullanır. Motor, `namelist()` ile yapıyı **tek bir byte çıkarmadan** inceler, yapıyı sınıflandırır ve doğru stratejiyi uygular.
-
-```
-ZIP alındı
-     │
-     ▼
-"addons/" üst dizinde var mı?
-     │
-    EVET ─────────────────────────────► DURUM A: DİREKT
-     │                                  Olduğu gibi çıkar → game/csgo/
-     │                                  Kullananlar: Metamod, CounterStrikeSharp
-    HAYIR
-     │
-     ▼
-Kökde tam olarak BİR gerçek dizin var mı?
-     │
-    EVET ─────────────────────────────► DURUM B: SARMALAYICI DÜZLEŞTIRME
-     │                                  "PluginAdi-v1.2/" önekini tüm yollardan sil
-     │                                  zip.open() pipe'ı ile doğru yere yaz — ara klasör yok
-     │                                  Kullananlar: çoğu GitHub plugin release'i
-    HAYIR
-     │
-     ▼
-Kökde .dll dosyaları var mı?
-     │
-    EVET ─────────────────────────────► DURUM C: DÜZLEMSEL DLL
-     │                                  Doğrudan eklenti hedef klasörüne çıkar
-    HAYIR
-     │
-     ▼
-     BELIRSIZ ───────────────────────► UnrecognizedZipStructureError fırlat
-                                        (tam namelist mesajda gösterilir)
-```
-
----
-
-## 🛡️ Snapshot ve Rollback (Self-Healing)
-
-Her eklenti kurulumundan önce `game/csgo/addons/` ve `game/csgo/cfg/` klasörlerinin **atomik ZIP yedeği** alınır. Kurulum başarısız olursa — bozuk arşiv, hatalı ZIP yapısı, ağ kopması — sistem bir saniye içinde önceki çalışan duruma döner.
-
-```
-Faz 8: eklenti kurulum döngüsü
-     │
-     ├─ take_snapshot(csgo_dir, .snapshots/, label="before_PluginAdi")
-     │     addons/ + cfg/ → .snapshots/20250705T123456_before_PluginAdi.zip
-     │     Eşlik eden .json atomik yazma ile oluşturulur (os.replace)
-     │
-     ├─ install_mod(...)   ──► BAŞARILI → cs2-plugins.lock'a kaydet
-     │
-     └─ install_mod(...)   ──► BAŞARISIZ
-           │
-           └─ snapshot.rollback(snap, csgo_dir)
-                 shutil.rmtree(addons/, cfg/)
-                 zipfile.extractall(csgo_dir)
-                 konsol: "Rolled back to 20250705T123456_before_PluginAdi"
-```
-
-Diskte yalnızca son **5 snapshot** saklanır. Her yeni snapshot sonrası `cleanup_old_snapshots()` otomatik çalışır.
-
----
-
-## 🔬 Runtime Doğrulama (`--verify`)
-
-Dosyaların diskte olması eklentinin gerçekten yüklendiğini kanıtlamaz. Doğrulama açıkken (kurulum sırasında y/N sorusu veya `--verify` bayrağı), her eklenti kurulumu gerçek Source engine runtime'ına karşı test edilir:
-
-```
-install_mod(...)  ──►  Diskte BAŞARILI
-     │
-     ├─ RCON ön-yoklama              portta zaten sunucu var mı? → başlatma, uyar
-     ├─ capture_baseline()           console.log byte offset + zaman damgası
-     ├─ cs2.exe -condebug başlat     doğrudan subprocess, stdio sessiz
-     ├─ wait_until_ready()           sunucu cevap verene kadar RCON yokla (veya timeout)
-     ├─ stop()                       RCON quit → terminate → kill kademelendirmesi
-     └─ scan_runtime_logs()          console.log kuyruğu + yeni CSSharp log dosyaları
-              │
-              ├─ yükleme imzası, hata yok  → doğrulandı ✓  → kilit dosyasına kaydet
-              ├─ hata imzaları bulundu     → rollback_with_retry() → snapshot geri yüklendi,
-              │                              kilit dosyasına KAYDEDİLMEZ
-              └─ sonuçsuz                  → sarı uyarı, kurulum korunur
-```
-
-Tasarım garantileri:
-
-- **Yalnızca kanıta dayalı rollback.** Rollback sadece doğrulanmış hata imzalarında tetiklenir (`Exception`, `Failed to load plugin`, CSSharp `[Error]` etiketleri). Boot zaman aşımı veya eksik log, sağlıklı bir kurulumu asla silmez.
-- **Baseline kapsamı.** Yalnızca kurulumdan *sonra* üretilen log içeriği taranır — console.log byte offset'ten okunur, CSSharp log dosyaları mtime ile filtrelenir. Geçen haftaki oturumun hataları bugünkü eklentiyi patlatamaz.
-- **Windows dosya kilidi backoff'u.** İşlem çıkışından sonra OS, DLL kilitlerini birkaç yüz milisaniye tutabilir; rollback 0.2s/0.5s/1.0s merdiveniyle yeniden dener.
-- **Port çakışması güvenliği.** Hedef portta canlı bir sunucu RCON'a cevap veriyorsa ikinci bir `cs2.exe` asla başlatılmaz.
-
----
-
-## 🔒 Eklenti Kilit Dosyası
-
-Her başarılı eklenti kurulumu `cs2-plugins.lock` dosyasına tam GitHub release meta bilgisiyle kaydedilir:
-
-```json
-{
-  "schema_version": 1,
-  "entries": {
-    "cssjunkie/SomePlugin": {
-      "owner": "cssjunkie",
-      "repo": "SomePlugin",
-      "version": "v1.4.2",
-      "commit_ref": "main",
-      "download_url": "https://github.com/cssjunkie/SomePlugin/releases/download/v1.4.2/SomePlugin.zip",
-      "asset_keyword": null,
-      "installed_at": "2025-07-05T12:34:56Z"
-    }
-  }
-}
-```
-
-### Kilit Dosyasından Sunucu Geri Yükleme
-
-```bash
-python main.py --restore
-```
-
-`--restore` bayrağı installer'ı tamamen atlar. `cs2-plugins.lock` içindeki her girdiyi okur, her eklentiyi **sabitlenmiş URL'den** indirir (GitHub API'ye gitmez) ve doğru dizinlere kurar. Sonuç: herhangi bir makine, VPS veya Docker container'da birebir aynı eklenti seti.
-
----
-
-## 🎛️ RCON Yöneticisi
-
-`core/rcon_manager.py`, **Source RCON wire protokolünü** pure `asyncio` TCP soketi üzerinde uygular — harici bağımlılık sıfır.
-
-```python
-async with RCONClient(host="127.0.0.1", port=27015, password="sifre") as rcon:
-    await rcon.add_admin("76561198000000000", "@css/root")
-    await rcon.change_map("de_mirage")
-    await rcon.broadcast("Sunucu 5 dakika sonra yeniden başlayacak.")
-    await rcon.kick_player("griefer", "Kural ihlali")
-    await rcon.ban_player("76561198000000001", duration_minutes=60)
-```
-
-RCON şifresi kurulum sırasında girilen prompt'tan alınır ve `start_server.bat` içine `-rcon_password` parametresiyle enjekte edilir. Sunucu ilk açılışta RCON-hazır olarak başlar.
-
----
-
-## 🌐 Ağ & Port Yönlendirme
-
-> **Halka açık sunucular için zorunlu.** Oyuncular, router veya Windows Güvenlik Duvarı tarafından engellenen bir porta bağlanamaz.
-
-### Windows Güvenlik Duvarı Kuralları
-
-Gerekli portları açmak için aşağıdaki komutları **Yönetici** olarak çalıştır:
-
-```cmd
-:: Oyun portu — UDP (oyuncu trafiği)
-netsh advfirewall firewall add rule name="CS2 Server UDP" protocol=UDP dir=in localport=27015 action=allow
-
-:: RCON portu — TCP (uzak konsol)
-netsh advfirewall firewall add rule name="CS2 Server TCP" protocol=TCP dir=in localport=27015 action=allow
-```
-
-Kurulum sırasında farklı bir port seçtiysen `27015` yerine o portu yaz.
-
-### Router / Port Yönlendirme
-
-1. Router yönetim panelini aç — genellikle `192.168.1.1` veya `192.168.0.1`.
-2. **Port Yönlendirme** bölümünü bul (firmware'e göre **Sanal Sunucu** veya **NAT** da denir).
-3. Sunucu makinenin **yerel IP adresi** için iki kural oluştur:
-
-| Kural | Protokol | Dış Port | İç Port |
-|-------|----------|----------|---------|
-| CS2 Oyun | **UDP** | 27015 | 27015 |
-| CS2 RCON | **TCP** | 27015 | 27015 |
-
-4. Kaydet ve uygula. Gerekirse router'ı yeniden başlat.
-5. Sunucuyu başlattıktan sonra [canyouseeme.org](https://canyouseeme.org) ile portun erişilebilir olduğunu doğrula.
-
-> Kurulum sırasında seçtiğin port, `-port` parametresiyle `start_server.bat`'a otomatik enjekte edilir. Manuel düzenleme gerekmez.
-
----
-
-## 🗄️ Veritabanı Entegrasyonu & Plugin Bağlama
-
-Pek çok CounterStrikeSharp eklentisi — **Rank, VIP, Stats, Bans** — oyuncu verilerini harita değişimleri ve sunucu yeniden başlatmalarında kalıcı tutmak için bir MySQL veritabanına ihtiyaç duyar. Geçerli bir `databases.json` olmadan bu eklentiler sessizce yüklenmez veya başlarken bağlantı hatası verir.
-
-### Nasıl Çalışır?
-
-Kurulum sırasında araç isteğe bağlı bir prompt sunar:
-
-```
-Configure MySQL database for CSSharp plugins? [y/N]:
-```
-
-`y` cevabını verirsen araç veritabanı bilgilerini toplar ve atomik olarak şu dosyayı yazar:
-
-```
-game/csgo/addons/counterstrikesharp/configs/databases.json
-```
-
-CSSharp standart bağlantı bloğuyla:
-
-```json
-{
-  "default": {
-    "Host": "127.0.0.1",
-    "Port": 3306,
-    "User": "root",
-    "Password": "sifre",
-    "Database": "cs2_server"
-  }
-}
-```
-
-CSSharp konvansiyonunu takip eden her SQL bağımlı eklenti, başlangıçta `"default"` anahtarını okur. Eklenti başına ayrı yapılandırma gerekmez — tek dosya hepsini bağlar.
-
-### XAMPP Kurulumu (Windows'ta En Hızlı Yol)
-
-Hazır bir MySQL sunucun yoksa, [XAMPP](https://www.apachefriends.org/download.html) tek installer ile ihtiyacın olan her şeyi paketler.
-
-1. XAMPP'ı indir ve kur.
-2. **XAMPP Control Panel**'i aç (`xampp-control.exe`).
-3. İki servisin yanındaki **Start** butonuna bas:
-   - **MySQL** — CSSharp eklentilerinin bağlanacağı veritabanı motoru.
-   - **Apache** — sadece **phpMyAdmin**'i tarayıcıdan (`http://localhost/phpmyadmin`) kullanmak istersen gerekli.
-4. Her iki servisin göstergesi yeşile dönmeli. MySQL başlamıyorsa muhtemelen `3306` portu başka bir servis tarafından kullanılıyordur — çakışan servisi (genellikle başka bir MySQL kurulumu) durdurup Start'a tekrar bas.
-5. Installer prompt'unda XAMPP varsayılan bilgileri:
-   - Host: `127.0.0.1`
-   - Port: `3306`
-   - Kullanıcı adı: `root`
-   - Şifre: *(boş bırak — XAMPP varsayılan olarak boş root şifresiyle gelir)*
-   - Veritabanı: `cs2_server`
-
-> **Güvenlik notu:** Boş root şifresi lokal geliştirme için sorun değil, ancak port dışarı açıksa ciddi risk. Port `3306`'yı internete açmadan önce phpMyAdmin → **Kullanıcı hesapları** → **Yetkileri düzenle** yolundan `root@localhost` için bir şifre belirle.
-
-### HeidiSQL / phpMyAdmin Kurulumu
-
-1. [HeidiSQL](https://www.heidisql.com/) (Windows, ücretsiz) veya phpMyAdmin (XAMPP ile birlikte gelir ya da VPS'de standalone) kur.
-2. MySQL instance'ına bağlan (varsayılan: `127.0.0.1:3306`, kullanıcı `root`).
-3. Kurulum sırasında girdiğin isimle (örn. `cs2_server`) yeni bir veritabanı oluştur.
-4. Sunucuyu başlat — her eklenti ilk yüklemede kendi tablolarını oluşturur. Manuel şema içe aktarımı gerekmez.
-5. Veritabanı uzak bir sunucuda çalışıyorsa, yetkisiz erişimi önlemek için `3306` portunu yalnızca sunucu IP'sine açık bırak.
-
-> **Veritabanını atla:** Prompt'ta Enter'a bas (varsayılan `N`). `databases.json` oluşturulmaz ve hiçbir eklenti bağlantı denemez.
-
----
-
-## 💡 Neden Hibrit Model?
-
-Çoğu sunucu kurulum rehberi ya tamamen **shell script** (hızlı ama kırılgan) ya da tamamen **Docker** (taşınabilir ama opak). Bu araç **ön-besleme + async log okuma hibrit modelini** kullanır:
-
-1. **Ön-Besleme (Pre-seeding):** Tüm konfigürasyon ve eklenti dosyaları sunucu hiç başlamadan diske yerleştirilir. Sunucu ilk açılışında hatasız başlar, "değişiklikleri uygulamak için yeniden başlat" döngüsü yok.
-
-2. **Async Log Okuma:** Python, subprocess stdout'unu async stream olarak okur. Event loop meşgul olmaz, arayüz canlı kalır ve ilerleme değerleri sahte timer'dan değil gerçek veriden gelmektedir.
-
-3. **SaaS'a Hazır Tasarım:** Aynı pipeline bir VPS üzerinde Docker içinde çalışabilir. `--steam-id` parametresi ve ödeme webhook'u ekle — "tek tıkla CS2 sunucu" SaaS'ına dönüşür. Mimari bu genişlemeyi ilk günden göz önünde bulundurarak tasarlandı.
-
----
-
-## 📋 Gereksinimler
-
-- Python 3.10+
-- Windows (CS2 dedicated server binary için; Python kodu OS-agnostik)
-- Steam [Game Server Login Token](https://steamcommunity.com/dev/managegameservers) (GSLT)
-- Steam [Web API Key](https://steamcommunity.com/dev/apikey)
-
----
-
-## ⚡ Hızlı Başlangıç
-
-```bash
-# 1. Repoyu klonla
-git clone https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator.git
-cd Cs2_AwpLego_Server_Creator
-
-# 2. Bağımlılıkları yükle
-pip install -r requirements.txt
-
-# 3. Çalıştır
-python main.py
-
-# 3b. Runtime doğrulamayla çalıştır (her eklenti kurulumundan sonra sunucuyu başlatır)
-python main.py --verify
-
-# 3c. CS2 güncellemesinden sonra mevcut sunucuyu güncelle (Metamod yamasını yeniden uygular)
-python main.py --update
-
-# 4. Mevcut eklenti setini yeni bir makinede geri yükle
-python main.py --restore
-
-# 5. Kurulu sunucuyu yeniden kurmadan kontrol et
-python main.py --check --dir "C:\sunucu\yolu"
-python main.py --check --live --dir "C:\sunucu\yolu"   # sunucuyu açıp kapatarak test eder
-```
-
-`--check` sadece dosyaları okur (birkaç saniye): CS2 build'i, Metamod **2.0**
-(CS2 loader'ı var mı — Source 1'e özel 1.x sürümü değil), CounterStrikeSharp ve
-Metamod kaydı, `gameinfo.gi` yaması, `start_server.bat` bayrakları ve eklenti
-klasörleri. `--live` ek olarak sunucuyu `start_server.bat` ayarlarıyla açar,
-RCON üzerinden `meta version` / `css_plugins list` sorar (gerekirse boot
-loglarına bakar) ve kapatır. Herhangi bir kontrol başarısızsa çıkış kodu `1` olur.
-
-Araç senden şunları isteyecek:
-- Kurulum dizini (varsayılan: `~/cs2_server`)
-- Steam GSLT token ve Web API anahtarı
-- Sunucu IP adresi, **port** (varsayılan: `27015`) ve varsayılan harita
-- **RCON şifresi** (`start_server.bat`'a yazılır; `RCONClient` tarafından kullanılır)
-- **MySQL veritabanı** (isteğe bağlı — CSSharp eklentileri için `databases.json` üretir)
-- Kurmak istediğin CounterStrikeSharp eklentileri
-
----
-
-## 🩺 Sorun Giderme
-
-| Belirti | Sebep & çözüm |
-|---|---|
-| Pencere başlığında **"Select …"** yazıyor ve hiçbir şey tepki vermiyor | Klasik CMD penceresine tıklamak QuickEdit seçim modunu açar ve **uygulamayı duraklatır**. `Esc` (veya `Enter`) ile devam eder. |
-| Prompt'a token yapıştıramıyorum | Klasik CMD'de **sağ-tık** ile yapıştır; `Ctrl+V` yalnızca Windows Terminal'de çalışır. Tüm girişler görünür — yapıştırdığını gözünle doğrulayabilirsin. |
-| "Install CS2 Server" 0%'da bekliyor | SteamCMD'nin self-update, login ve ~33 GB disk ön-tahsis fazları yüzde basmaz. Görev adının yanındaki soluk durum satırına bak — değiştiği sürece kurulum canlıdır. |
-
----
-
-## 🔌 Çalışma Zamanında Eklenti Ekleme
-
-Eklenti yöneticisi ekranında herhangi bir GitHub reposunu şu formatlardan biriyle gir:
-
-```
-owner/repo
-https://github.com/owner/repo
-```
-
-Araç en son release'i otomatik bulur, snapshot alır, ZIP yapısını sınıflandırır, şuraya kurar ve tam sürümü `cs2-plugins.lock`'a kaydeder:
-
-```
-game/csgo/addons/counterstrikesharp/plugins/<EklentiAdi>/
-```
-
-Sabit kodlanmış eklenti adı yok. Sabit kodlanmış URL yok. Sıfır manuel dosya yönetimi. Hata durumunda tam rollback.
-
----
-
-## 🧰 Teknoloji Yığını
-
-| Kütüphane | Rol |
-|---|---|
-| [`httpx`](https://www.python-httpx.org/) | Async HTTP istemcisi; büyük dosyaları chunk'larla indirir |
-| [`rich`](https://rich.readthedocs.io/) | Terminal arayüzü — ilerleme çubukları, paneller, tablolar, promptlar |
-| [`tenacity`](https://tenacity.readthedocs.io/) | GitHub API çağrıları için üstel geri çekilmeli yeniden deneme |
-| `asyncio` | SteamCMD için non-blocking subprocess; async indirme; RCON TCP istemcisi |
-| `zipfile` | ZIP inceleme, çıkarma ve snapshot arşivleme (stdlib) |
-| `struct` | Source RCON binary paket kodlama/çözme (stdlib) |
-
----
-
-## ♻️ Idempotency ve Durum
-
-Her adım bir **dosya sistemi predikatıyla** korunur — diskteki gerçek dosyalar her zaman tek otorite.
-
-```python
-# gameinfo.gi asla iki kez yamalanmaz
-def is_gameinfo_patched(csgo_dir: Path) -> bool:
-    content = (csgo_dir / "gameinfo.gi").read_text(encoding="utf-8")
-    return "csgo/addons/metamod" in content
-```
-
-Durumu iki eşlik dosyası takip eder:
-
-| Dosya | Amaç |
-|---|---|
-| `install_state.json` | Faz başına tamamlanma zaman damgası ve sürüm bilgisi |
-| `cs2-plugins.lock` | Eklenti başına tam sürüm, commit ref ve indirme URL'si |
-
-Her ikisi de `os.replace()` ile atomik olarak yazılır. Birini silerek tam yeniden kontrol zorlanabilir — hiçbir şey bozulmaz.
-
----
-
-## 🧪 Test & Kalite Güvencesi
-
-Tüm test paketi **tamamen çevrimdışı** çalışır — sıfır ağ çağrısı, sıfır gerçek soket, sıfır gerçek işlem. Async HTTP `httpx.MockTransport` ile taklit edilir; RCON TCP katmanı elle yazılmış `asyncio` stream sahteleri üzerinden sürülür; sunucu işlem yaşam döngüsü senaryolu bir subprocess dublörüne karşı test edilir — terminate/kill kademelendirmesi bile hiçbir binary başlatılmadan doğrulanır. Her async test `asyncio.run()` ile çalıştırılır; ek eklenti (`pytest-asyncio`, `respx`) gerekmez — ve tüm paket bir saniyenin oldukça altında tamamlanır.
-
-```bash
-pip install -r requirements.txt
-pytest --cov=core --cov=models --cov-report=term-missing
-```
-
-| Modül | Kapsam |
-|---|---|
-| `models/schemas.py` | %98 |
-| `core/rcon_manager.py` | %94 |
-| `core/log_validator.py` | %94 |
-| `core/server_controller.py` | %94 |
-| `core/mod_manager.py` | %92 |
-| `core/lock_manager.py` | %85 |
-| **Toplam** | **%86** |
-
-**206 test**; Akıllı Zip Çıkarma karar ağacını, GitHub API çözümleyicisini (asset seçimi, 403/404, bozuk ve dict olmayan JSON), ilerleme callback'li ve yazma-hatası temizlikli streaming indirmeleri, snapshot rollback ve DIRECT yapı yönlendirme regresyonu dahil tam `install_mod` pipeline'ını, Source RCON wire codec'ini — pack/parse round-trip, auth başarı/başarısızlık, connect/send/receive timeout, bozuk çerçeveleme, tüm kolaylık komutları — runtime doğrulama katmanının tamamını (baseline-kapsamlı log tarama, false-positive korumaları, kapatma kademelendirmesi, port çakışması yoklaması, rollback etrafındaki Windows dosya kilidi backoff'u) ve yaşam döngüsü sağlamlaştırmasını kapsar: SteamCMD self-update retry merdiveni, disk alanı ön kontrolü ve batch-güvenli girdi doğrulama. Kapsam CI'da %80 barajıyla zorunlu tutulur; her fazda eklenen yeni kod bu barajın üzerinde geldiği için toplam aşınmak yerine yukarı tırmanıyor.
-
----
-
-## 📄 Lisans
-
-MIT — [LICENSE](LICENSE) dosyasına bakın.
-
----
-
-<div align="center">
-
-**Built for server operators who value their time.**
-*Zamanına değer veren sunucu operatörleri için.*
-
-⭐ **If this project saved you an afternoon, a star keeps it growing.** ⭐
-
-[🐛 Report Bug](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/issues) &nbsp;·&nbsp; [💡 Request Feature](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/issues) &nbsp;·&nbsp; [🔀 Contribute](https://github.com/AkoSuminoe/Cs2_AwpLego_Server_Creator/pulls)
-
-</div>
