@@ -225,13 +225,46 @@ def _installed_plugin_names(csgo_dir: Path) -> list[str]:
         return []
 
 
-def _plugin_loaded(name: str, text: str) -> bool:
-    """CSSharp logs 'Finished loading plugin <Name>'; css_plugins list quotes the module name."""
-    pattern = re.compile(
-        rf"Finished loading plugin {re.escape(name)}\b|\[#\d+:LOADED\][^\n]*{re.escape(name)}",
-        re.IGNORECASE,
-    )
-    return bool(pattern.search(text))
+_LOADING_RE = re.compile(r"Loading plugin (\S+)")
+_FAILED_FROM_RE = re.compile(r"Failed to load plugin from .*?[\\/]plugins[\\/]([^\\/]+)[\\/]", re.IGNORECASE)
+_EXC_MSG_RE = re.compile(r"\w+Exception: (.+)")
+_WRAPPER_EXC = "Exception has been thrown by the target of an invocation"
+
+
+def plugin_load_results(text: str) -> tuple[set[str], dict[str, str]]:
+    """
+    Walks CSSharp's log in order. 'Loading plugin <Folder>' is followed by
+    either 'Finished loading plugin <Display Name>' (the display name often
+    differs from the folder) or 'Failed to load plugin from …/plugins/<Folder>/'
+    with the real exception a few lines below. Returns (loaded folder names
+    lowercased, {folder: reason}).
+    """
+    loaded: set[str] = set()
+    failed: dict[str, str] = {}
+    lines = text.splitlines()
+    current: Optional[str] = None
+    for i, line in enumerate(lines):
+        failure = _FAILED_FROM_RE.search(line)
+        if failure:
+            name = failure.group(1)
+            reason = "see CSSharp log"
+            for follow in lines[i + 1:i + 8]:
+                m = _EXC_MSG_RE.search(follow)
+                if m and _WRAPPER_EXC not in m.group(1):
+                    reason = m.group(1).strip()[:160]
+                    break
+            failed[name] = reason
+            loaded.discard(name.lower())
+            current = None
+            continue
+        start = _LOADING_RE.search(line)
+        if start and "Finished" not in line:
+            current = start.group(1)
+        elif "Finished loading plugin" in line and current:
+            loaded.add(current.lower())
+            failed.pop(current, None)
+            current = None
+    return loaded, failed
 
 
 def _read_cssharp_logs_since(csgo_dir: Path, since_epoch: float) -> str:
@@ -327,7 +360,11 @@ async def run_live_check(
 
     loaded = len(_CSS_LOADED_RE.findall(css_out))
     installed = _installed_plugin_names(csgo_dir)
-    not_loaded = [n for n in installed if not _plugin_loaded(n, combined)]
+    loaded_names, failures = plugin_load_results(combined)
+    not_loaded = [
+        f"{n} ({failures[n]})" if n in failures else n
+        for n in installed if n.lower() not in loaded_names
+    ]
     css_answered = bool(css_out.strip()) and "unknown command" not in css_out.lower()
     if loaded or css_answered or _CSS_BOOT_RE.search(combined):
         detail = f"Loaded, {loaded} plugin(s) reported LOADED" if loaded else "Loaded (no plugins listed)"

@@ -355,7 +355,8 @@ def test_live_check_names_installed_plugins_that_did_not_load(tmp_path: Path, li
         async def start(self) -> None:
             (logs / "log-cssharp20261015.txt").write_text(
                 "CounterStrikeSharp is starting up...\n"
-                "(cssharp:PluginContext) Finished loading plugin BotHiderImpl\n",
+                "(cssharp:PluginContext) Loading plugin BotHiderImpl\n"
+                "(cssharp:PluginContext) Finished loading plugin Bot Hider\n",
                 encoding="utf-8",
             )
 
