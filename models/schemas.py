@@ -58,6 +58,7 @@ class ServerConfig:
 class PluginRef:
     owner: str
     repo: str
+    local_path: Optional[str] = None  # folder or .zip on disk instead of GitHub
 
     @property
     def display_name(self) -> str:
@@ -65,7 +66,13 @@ class PluginRef:
 
     @property
     def full_ref(self) -> str:
+        if self.local_path:
+            return f"local:{self.repo}"
         return f"{self.owner}/{self.repo}"
+
+    @property
+    def source(self) -> str:
+        return self.local_path or self.full_ref
 
 
 @dataclass

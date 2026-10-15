@@ -920,3 +920,13 @@ def test_install_metamod_cs2_extracts_addons_into_csgo(tmp_path: Path) -> None:
     result = asyncio.run(_run())
     assert result.version == "2.0.0-git1481"
     assert (tmp_path / "addons" / "metamod" / "bin" / "win64" / "metamod.2.cs2.dll").is_file()
+
+
+def test_classify_root_dlls_with_single_subfolder_is_flat_not_wrapper() -> None:
+    """A lang/ folder beside the DLLs must not be mistaken for a wrapper (drops the DLLs)."""
+    namelist = [
+        "lang/", "AutoRestart.deps.json", "AutoRestart.dll", "AutoRestart.pdb", "lang/en.json",
+    ]
+    case, prefix = _classify_zip(namelist)
+    assert case == ZipCase.FLAT_DLL
+    assert prefix is None

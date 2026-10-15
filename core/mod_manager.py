@@ -10,6 +10,7 @@ to their destination paths.
 from __future__ import annotations
 
 import re
+import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -65,6 +66,9 @@ def parse_repo_string(repo: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # GitHub API
 # ---------------------------------------------------------------------------
+
+_WINDOWS_ASSET_RE = re.compile(r"(?:^|[^a-z])win(?:dows|64|32)?(?:[^a-z]|$)", re.IGNORECASE)
+
 
 @github_retry()
 async def resolve_latest_asset_url(
@@ -122,7 +126,12 @@ async def resolve_latest_asset_url(
 
     zip_assets = [a for a in assets if a["name"].lower().endswith(".zip")]
     if zip_assets:
-        return zip_assets[0]["browser_download_url"], version, commit_ref
+        # Many plugins ship per-OS builds; this server is Windows-only, so a
+        # Linux zip listed first must never win by position alone.
+        windows = [a for a in zip_assets if _WINDOWS_ASSET_RE.search(a["name"])]
+        not_linux = [a for a in zip_assets if "linux" not in a["name"].lower()]
+        best = (windows or not_linux or zip_assets)[0]
+        return best["browser_download_url"], version, commit_ref
 
     return assets[0]["browser_download_url"], version, commit_ref
 
@@ -205,7 +214,14 @@ def _classify_zip(namelist: list[str]) -> tuple[ZipCase, Optional[str]]:
         if any(p.startswith(name + "/") for p in namelist)
     }
 
-    if len(real_dirs) == 1:
+    # Files beside the single directory mean it is a subfolder (e.g. lang/),
+    # not a wrapper — flattening it would drop the root-level DLLs.
+    root_files = [
+        p for p in namelist
+        if p and "/" not in p and not any(p.startswith(skip) for skip in _SKIP_PREFIXES)
+    ]
+
+    if len(real_dirs) == 1 and not root_files:
         wrapper = next(iter(real_dirs))
         return ZipCase.WRAPPER_FLATTEN, wrapper + "/"
 
@@ -386,6 +402,8 @@ async def _install_from_url(
             raise UnrecognizedZipStructureError(
                 f"Failed to extract '{repo}' into {dest_dir}: {exc}"
             ) from exc
+        if dest_dir == target_dir:
+            dest_dir = align_plugin_folder(dest_dir)
 
     return ModInstallResult(
         repo=repo,
@@ -395,6 +413,95 @@ async def _install_from_url(
         target_dir=str(dest_dir),
         download_url=download_url,
         commit_ref=commit_ref,
+    )
+
+
+def align_plugin_folder(plugin_dir: Path) -> Path:
+    """
+    CounterStrikeSharp only loads plugins/<Name>/<Name>.dll. Releases are
+    installed under the repo name (e.g. CS2-Bot-Randomizer) while the assembly
+    is often named differently (BotRandomizer.dll), so the folder is renamed
+    to the assembly that owns the single <Name>.deps.json. Returns the final
+    directory; leaves anything ambiguous untouched.
+    """
+    if plugin_dir.parent.name.lower() != "plugins" or not plugin_dir.is_dir():
+        return plugin_dir
+    if (plugin_dir / f"{plugin_dir.name}.dll").is_file():
+        return plugin_dir
+    names = [
+        p.name[: -len(".deps.json")]
+        for p in plugin_dir.glob("*.deps.json")
+        if (plugin_dir / f"{p.name[: -len('.deps.json')]}.dll").is_file()
+    ]
+    if len(names) != 1:
+        return plugin_dir
+    dest = plugin_dir.parent / names[0]
+    if dest.exists():
+        # Reinstall over an aligned copy: overwrite files, keep extra configs.
+        shutil.copytree(plugin_dir, dest, dirs_exist_ok=True)
+        shutil.rmtree(plugin_dir)
+    else:
+        plugin_dir.rename(dest)
+    return dest
+
+
+def install_local(
+    source: Path,
+    target_dir: Path,
+    direct_target_dir: Optional[Path] = None,
+) -> ModInstallResult:
+    """
+    Installs a plugin from a local .zip or folder. A folder is zipped first so
+    both go through the same classify → route → extract pipeline as GitHub
+    downloads, and therefore land in exactly the same place.
+    """
+    source = Path(source).expanduser()
+    if not source.exists():
+        raise InvalidRepoReferenceError(f"Local plugin path not found: {source}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        if source.is_dir():
+            zip_path = Path(shutil.make_archive(str(Path(tmp) / "local"), "zip", root_dir=source))
+        elif source.suffix.lower() == ".zip":
+            zip_path = source
+        else:
+            raise InvalidRepoReferenceError(
+                f"Local plugin must be a folder or a .zip file: {source}"
+            )
+
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                namelist = zf.namelist()
+        except zipfile.BadZipFile as exc:
+            raise UnrecognizedZipStructureError(f"'{source}' is not a valid ZIP: {exc}") from exc
+
+        case, wrapper_prefix = _classify_zip(namelist)
+        if case == ZipCase.AMBIGUOUS:
+            raise UnrecognizedZipStructureError(
+                f"Cannot determine plugin layout for '{source}'.\n"
+                f"Contents (first 30 entries): {namelist[:30]}"
+            )
+
+        dest_dir = target_dir
+        if direct_target_dir is not None and _routes_to_addons(namelist, case, wrapper_prefix):
+            dest_dir = direct_target_dir
+        try:
+            files_written = _extract_zip(zip_path, dest_dir, case, wrapper_prefix)
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise UnrecognizedZipStructureError(
+                f"Failed to extract '{source}' into {dest_dir}: {exc}"
+            ) from exc
+        if dest_dir == target_dir:
+            dest_dir = align_plugin_folder(dest_dir)
+
+    return ModInstallResult(
+        repo=source.stem,
+        version="local",
+        zip_case=case,
+        files_written=files_written,
+        target_dir=str(dest_dir),
+        download_url=str(source),
+        commit_ref="",
     )
 
 

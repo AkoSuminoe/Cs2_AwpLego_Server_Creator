@@ -179,30 +179,39 @@ def collect_runtime_verify() -> bool:
 def collect_plugins() -> list[PluginRef]:
     console.rule("[bold cyan]Plugin Manager[/bold cyan]")
     console.print(
-        "Add CounterStrikeSharp plugins from GitHub.\n"
-        "[dim]Format:  owner/repo  or  https://github.com/owner/repo[/dim]\n"
+        "Add CounterStrikeSharp plugins from GitHub or from your disk.\n"
+        "[dim]GitHub:  owner/repo  or  https://github.com/owner/repo\n"
+        "Local:   a plugin folder or .zip path (drag & drop works), or [L] to browse[/dim]\n"
     )
 
     plugins: list[PluginRef] = []
 
     while True:
         _render_plugin_table(plugins)
-        console.print("\n[A] Add  [R] Remove  [C] Continue\n")
-        choice = Prompt.ask("Choice", choices=["a", "r", "c", "A", "R", "C"], console=console).lower()
+        console.print("\n[A] Add  [L] Local (browse)  [R] Remove  [C] Continue\n")
+        choice = Prompt.ask(
+            "Choice", choices=["a", "l", "r", "c", "A", "L", "R", "C"], console=console
+        ).lower()
 
         if choice == "c":
             break
 
-        if choice == "a":
-            raw = Prompt.ask("GitHub repo", console=console)
-            ref = _validate_repo_input(raw)
+        if choice in ("a", "l"):
+            if choice == "l":
+                raw = pick_local_plugin()
+                if raw is None:
+                    console.print("[yellow]Nothing selected.[/yellow]")
+                    continue
+            else:
+                raw = Prompt.ask("GitHub repo or local path", console=console)
+            ref = validate_plugin_input(raw)
             if ref is None:
                 continue
             if any(p.full_ref == ref.full_ref for p in plugins):
-                console.print(f"[yellow]'{ref.full_ref}' is already in the list.[/yellow]")
+                console.print(f"[yellow]'{ref.source}' is already in the list.[/yellow]")
             else:
                 plugins.append(ref)
-                console.print(f"[green]Added: {ref.full_ref}[/green]")
+                console.print(f"[green]Added: {ref.source}[/green]")
 
         elif choice == "r":
             if not plugins:
@@ -213,7 +222,7 @@ def collect_plugins() -> list[PluginRef]:
                 idx = int(num) - 1
                 if 0 <= idx < len(plugins):
                     removed = plugins.pop(idx)
-                    console.print(f"[yellow]Removed: {removed.full_ref}[/yellow]")
+                    console.print(f"[yellow]Removed: {removed.source}[/yellow]")
                 else:
                     console.print("[red]Number out of range.[/red]")
             except ValueError:
@@ -230,21 +239,72 @@ def _render_plugin_table(plugins: list[PluginRef]) -> None:
     table = Table(box=box.ROUNDED, border_style="cyan", show_header=True)
     table.add_column("#", style="dim", width=4)
     table.add_column("Plugin", style="bold white")
-    table.add_column("GitHub Repo", style="cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Source", style="cyan")
 
     for i, p in enumerate(plugins, 1):
-        table.add_row(str(i), p.display_name, p.full_ref)
+        table.add_row(str(i), p.display_name, "Local" if p.local_path else "GitHub", p.source)
 
     console.print(table)
 
 
-def _validate_repo_input(raw: str) -> Optional[PluginRef]:
+def validate_plugin_input(raw: str) -> Optional[PluginRef]:
+    """
+    An existing folder or .zip on disk becomes a local plugin; anything else
+    must parse as a GitHub reference. Quotes added by drag & drop are stripped.
+    """
+    cleaned = raw.strip().strip('"').strip("'")
+    if not cleaned:
+        console.print("[red]Enter a GitHub repo or a local path.[/red]")
+        return None
     try:
-        owner, repo = parse_repo_string(raw)
+        path = Path(cleaned).expanduser()
+        is_local = path.exists()
+    except (OSError, ValueError):
+        is_local = False
+    if is_local:
+        if path.is_file() and path.suffix.lower() != ".zip":
+            console.print("[red]Local plugins must be a folder or a .zip file.[/red]")
+            return None
+        resolved = path.resolve()
+        return PluginRef(owner="local", repo=resolved.stem, local_path=str(resolved))
+    try:
+        owner, repo = parse_repo_string(cleaned)
         return PluginRef(owner=owner, repo=repo)
     except InvalidRepoReferenceError as exc:
-        console.print(f"[red]Invalid repo: {exc}[/red]")
+        console.print(f"[red]Not a local path and not a valid repo: {exc}[/red]")
         return None
+
+
+def pick_local_plugin() -> Optional[str]:
+    """
+    Opens a native file dialog for a plugin .zip, falling back to a folder
+    dialog when cancelled. Returns None if nothing was chosen; drops back to
+    a typed path when no GUI is available (e.g. over SSH).
+    """
+    try:
+        import tkinter
+        from tkinter import filedialog
+    except ImportError:
+        return Prompt.ask("Local plugin path (folder or .zip)", console=console) or None
+
+    try:
+        root = tkinter.Tk()
+    except tkinter.TclError:
+        return Prompt.ask("Local plugin path (folder or .zip)", console=console) or None
+    try:
+        root.withdraw()
+        root.attributes("-topmost", True)
+        chosen = filedialog.askopenfilename(
+            title="Select a plugin .zip (Cancel to pick a folder instead)",
+            filetypes=[("Plugin archive", "*.zip")],
+            parent=root,
+        )
+        if not chosen:
+            chosen = filedialog.askdirectory(title="Select a plugin folder", parent=root)
+        return chosen or None
+    finally:
+        root.destroy()
 
 
 class InstallationProgress:
