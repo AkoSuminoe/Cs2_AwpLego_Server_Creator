@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import datetime
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -29,8 +30,20 @@ from cli.app import (
     show_summary,
     validate_plugin_input,
 )
-from core import config_patcher, health_check, mod_manager, plugin_configs, server_controller, snapshot, steamcmd_wrapper
+from rich.prompt import Prompt
+
+from core import (
+    config_patcher,
+    health_check,
+    mod_manager,
+    plugin_configs,
+    server_controller,
+    snapshot,
+    steamcmd_wrapper,
+    supervisor,
+)
 from core.lock_manager import LockFileManager
+from core.rcon_manager import RCONAuthError, RCONClient, RCONConnectionError
 from core.validator import (
     StateManager,
     is_cs2_installed,
@@ -85,6 +98,32 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="With --check: boot the server, confirm Metamod + CounterStrikeSharp load, then shut down",
     )
+    mode.add_argument(
+        "--serve",
+        action="store_true",
+        help="Run the server 24/7: auto-restart on crash, daily restart + update at --restart-at",
+    )
+    mode.add_argument(
+        "--stop",
+        action="store_true",
+        help="Ask a running --serve instance to stop the server and exit",
+    )
+    mode.add_argument(
+        "--install-service",
+        action="store_true",
+        help="Start --serve automatically when you log in to Windows",
+    )
+    mode.add_argument(
+        "--uninstall-service",
+        action="store_true",
+        help="Remove the Windows logon autostart created by --install-service",
+    )
+    p.add_argument(
+        "--restart-at",
+        metavar="HH:MM",
+        default="00:00",
+        help="Daily restart + update time for --serve / --install-service (default 00:00)",
+    )
     p.add_argument(
         "--dir",
         metavar="PATH",
@@ -101,6 +140,10 @@ def _parse_args() -> argparse.Namespace:
     args = p.parse_args()
     if args.live and not args.check:
         p.error("--live requires --check")
+    try:
+        args.restart_time = supervisor.parse_hhmm(args.restart_at)
+    except ValueError as exc:
+        p.error(str(exc))
     return args
 
 
@@ -180,8 +223,115 @@ async def _run_add_plugins(base_dir: Path, sources: list[str], verify: bool) -> 
                     verify_config=verify_config,
                 )
     show_summary(results)
+    if any(ok for _, ok, _ in results):
+        await _restart_for_plugins(
+            base_dir, health_check.parse_start_bat(server_dir / "game" / "start_server.bat")
+        )
     _print_config_hint(base_dir)
     return all(ok for _, ok, _ in results)
+
+
+async def _restart_for_plugins(
+    base_dir: Path, config: Optional[ServerConfig], interactive: bool = True
+) -> None:
+    """
+    Plugins (and their generated configs) only appear after a server start.
+    A supervised server gets a restart request; a manually started one is
+    restarted on confirmation; otherwise the user is told to start it once.
+    """
+    if supervisor.supervisor_running(base_dir):
+        supervisor.request_restart(base_dir, "plugins changed")
+        console.print(
+            "[cyan]Server is supervised — it will warn players and restart in ~60s "
+            "to load the new plugins.[/cyan]"
+        )
+        return
+
+    serving = False
+    if config is not None and config.rcon_password:
+        serving = await server_controller._is_port_already_serving(
+            config.server_port, config.rcon_password,
+            host=server_controller.rcon_host_for(config.server_ip),
+        )
+    if not serving:
+        console.print(
+            "[dim]Start the server once so the new plugins load and create their "
+            "config files.[/dim]"
+        )
+        return
+
+    answer = "n"
+    if interactive:
+        try:
+            answer = Prompt.ask(
+                "Server is running. Restart now so the plugins load?",
+                choices=["y", "n"], default="y", console=console,
+            )
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+    if answer != "y":
+        console.print("[yellow]Restart the server later to load the new plugins.[/yellow]")
+        return
+
+    host = server_controller.rcon_host_for(config.server_ip)
+    try:
+        async with RCONClient(host, config.server_port, config.rcon_password) as rcon:
+            await rcon.execute("say [Server] Restarting to load new plugins...")
+            await asyncio.sleep(3)
+            await rcon.execute("quit")
+    except (RCONAuthError, RCONConnectionError) as exc:
+        console.print(f"[red]Could not reach RCON to restart: {exc}[/red]")
+        return
+    for _ in range(30):
+        if not await server_controller._is_port_already_serving(
+            config.server_port, config.rcon_password, host=host
+        ):
+            break
+        await asyncio.sleep(1)
+    bat = base_dir / "cs2_server" / "game" / "start_server.bat"
+    if bat.exists() and sys.platform == "win32":
+        subprocess.Popen(["cmd", "/c", "start", "CS2 Server", str(bat)], cwd=str(bat.parent))
+        console.print("[green]Server restarted in a new window.[/green]")
+    else:
+        console.print("[yellow]Server stopped — start it again to load the plugins.[/yellow]")
+
+
+async def _run_serve(base_dir: Path, restart_time) -> bool:
+    if not base_dir.is_dir():
+        console.print(f"[red]Directory not found: {base_dir}[/red]")
+        return False
+    items = health_check.run_static_checks(base_dir)
+    if health_check.has_failures(items):
+        show_check_report(items, f"Health Check — {base_dir}")
+        console.print("[red]Fix the failed checks before running the server 24/7.[/red]")
+        return False
+    config = health_check.parse_start_bat(base_dir / "cs2_server" / "game" / "start_server.bat")
+    if config is None:
+        console.print("[red]start_server.bat not found — run the installer first.[/red]")
+        return False
+    if config.rcon_password and await server_controller._is_port_already_serving(
+        config.server_port, config.rcon_password,
+        host=server_controller.rcon_host_for(config.server_ip),
+    ):
+        console.print(
+            f"[red]A server already answers on port {config.server_port} — "
+            "close it first; --serve starts and owns its own instance.[/red]"
+        )
+        return False
+    if not config.rcon_password:
+        console.print("[yellow]No RCON password: players won't get restart warnings.[/yellow]")
+
+    console.rule("[bold cyan]CS2 Server — 24/7 mode[/bold cyan]")
+    console.print("[dim]Press Ctrl+C to stop the server and exit.[/dim]")
+    runner = supervisor.ServerSupervisor(
+        base_dir, config, restart_time, log=lambda line: console.print(f"[cyan]{line}[/cyan]")
+    )
+    try:
+        await runner.run()
+    except supervisor.SupervisorError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return False
+    return True
 
 
 def _print_config_hint(base_dir: Path) -> None:
@@ -490,6 +640,42 @@ async def main() -> None:
             sys.exit(1)
         return
 
+    if args.serve or args.stop or args.install_service or args.uninstall_service:
+        try:
+            base_dir = _resolve_base_dir(args, create=False)
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled by user.[/yellow]")
+            return
+        if args.stop:
+            if not supervisor.supervisor_running(base_dir):
+                console.print("[yellow]No --serve instance is running for this directory.[/yellow]")
+                return
+            supervisor.request_stop(base_dir)
+            console.print("[green]Stop requested — the server shuts down within a few seconds.[/green]")
+            return
+        if args.uninstall_service:
+            removed = supervisor.uninstall_autostart(base_dir)
+            console.print("[green]Autostart removed.[/green]" if removed
+                          else "[yellow]No autostart entry found.[/yellow]")
+            return
+        if args.install_service:
+            if sys.platform != "win32":
+                console.print("[red]--install-service is Windows-only; use cron/systemd elsewhere.[/red]")
+                sys.exit(1)
+            entry = supervisor.install_autostart(
+                sys.executable, Path(__file__).resolve(), base_dir, args.restart_time
+            )
+            console.print(
+                f"[green]The server will start in 24/7 mode at every Windows logon "
+                f"(daily restart + update at {args.restart_at}).[/green]\n"
+                f"[dim]Startup entry: {entry}\n"
+                f"Run now: {base_dir / 'serve.bat'}[/dim]"
+            )
+            return
+        if not await _run_serve(base_dir, args.restart_time):
+            sys.exit(1)
+        return
+
     if args.configs:
         try:
             base_dir = _resolve_base_dir(args, create=False)
@@ -747,6 +933,7 @@ async def main() -> None:
     # Phase 9 — summary
     show_summary(results)
     if plugins:
+        await _restart_for_plugins(base_dir, server_config)
         _print_config_hint(base_dir)
 
 
