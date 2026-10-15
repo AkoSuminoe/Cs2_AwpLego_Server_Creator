@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 from typing import List
 
+from core.validator import is_gameinfo_patched
 from models.schemas import LogScanBaseline, LogValidationResult
 
 CONSOLE_LOG_NAME = "console.log"
@@ -59,9 +60,20 @@ def _line_is_error(line: str, scoped_to_cssharp: bool) -> bool:
     return False
 
 
+def console_log_path(csgo_dir: Path) -> Path:
+    """
+    Where -condebug writes console.log. The engine uses the first Game search
+    path as its write path, so once gameinfo.gi carries the Metamod entry the
+    log lands in csgo/addons/metamod/ rather than csgo/.
+    """
+    if is_gameinfo_patched(csgo_dir):
+        return csgo_dir / "addons" / "metamod" / CONSOLE_LOG_NAME
+    return csgo_dir / CONSOLE_LOG_NAME
+
+
 def capture_baseline(csgo_dir: Path) -> LogScanBaseline:
     """Records the console.log high-water mark just before a server launch."""
-    console_path = csgo_dir / CONSOLE_LOG_NAME
+    console_path = console_log_path(csgo_dir)
     try:
         offset = console_path.stat().st_size
     except OSError:
@@ -97,7 +109,7 @@ def scan_runtime_logs(
     errors: List[str] = []
     scanned: List[str] = []
 
-    console_path = csgo_dir / CONSOLE_LOG_NAME
+    console_path = console_log_path(csgo_dir)
     if console_path.exists():
         scanned.append(str(console_path))
         tail = _read_console_tail(console_path, baseline.console_log_offset)

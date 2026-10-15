@@ -414,7 +414,18 @@ python main.py --update
 
 # 4. Restore an existing plugin set on a new machine
 python main.py --restore
+
+# 5. Health-check an existing install without reinstalling anything
+python main.py --check --dir "C:\cs2\my_server"
+python main.py --check --live --dir "C:\cs2\my_server"   # also boots the server
 ```
+
+`--check` only reads files (seconds): CS2 build, Metamod **2.0** (CS2 loader
+present, not the Source 1-only 1.x build), CounterStrikeSharp + its Metamod
+registration, the `gameinfo.gi` patch, `start_server.bat` flags and plugin
+folders. `--live` then boots the server from the settings in `start_server.bat`,
+asks `meta version` / `css_plugins list` over RCON (falling back to the boot
+logs), and shuts it down. Exit code is `1` when any check fails.
 
 The tool will prompt you for:
 - Installation directory (default: `~/cs2_server`)
@@ -904,7 +915,18 @@ python main.py --update
 
 # 4. Mevcut eklenti setini yeni bir makinede geri yükle
 python main.py --restore
+
+# 5. Kurulu sunucuyu yeniden kurmadan kontrol et
+python main.py --check --dir "C:\sunucu\yolu"
+python main.py --check --live --dir "C:\sunucu\yolu"   # sunucuyu açıp kapatarak test eder
 ```
+
+`--check` sadece dosyaları okur (birkaç saniye): CS2 build'i, Metamod **2.0**
+(CS2 loader'ı var mı — Source 1'e özel 1.x sürümü değil), CounterStrikeSharp ve
+Metamod kaydı, `gameinfo.gi` yaması, `start_server.bat` bayrakları ve eklenti
+klasörleri. `--live` ek olarak sunucuyu `start_server.bat` ayarlarıyla açar,
+RCON üzerinden `meta version` / `css_plugins list` sorar (gerekirse boot
+loglarına bakar) ve kapatır. Herhangi bir kontrol başarısızsa çıkış kodu `1` olur.
 
 Araç senden şunları isteyecek:
 - Kurulum dizini (varsayılan: `~/cs2_server`)

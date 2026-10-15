@@ -197,7 +197,7 @@ def test_start_omits_empty_credential_args(
     (args, _kwargs) = calls[0]
     assert "+sv_setsteamaccount" not in args
     assert "-authkey" not in args
-    assert "-rcon_password" not in args
+    assert "+rcon_password" not in args
     assert "-port" in args, "Positional flags must survive credential omission"
 
 

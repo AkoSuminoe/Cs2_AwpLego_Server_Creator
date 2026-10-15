@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from rich import box
 from rich.console import Console
@@ -21,6 +21,9 @@ from rich.table import Table
 from core.config_patcher import is_safe_batch_value, is_valid_gslt, is_valid_port
 from core.mod_manager import InvalidRepoReferenceError, parse_repo_string
 from models.schemas import DatabaseConfig, PluginRef, ServerConfig
+
+if TYPE_CHECKING:
+    from core.health_check import CheckItem
 
 console = Console()
 
@@ -93,6 +96,11 @@ def collect_server_config() -> ServerConfig:
     while True:
         server_ip = Prompt.ask("[bold]Server IP address[/bold]", console=console).strip()
         if server_ip and is_safe_batch_value(server_ip):
+            if server_ip.startswith("127.") or server_ip.lower() == "localhost":
+                console.print(
+                    "[yellow]Loopback address: only this PC will be able to connect. "
+                    "Use 0.0.0.0 or your LAN/public IP for other players.[/yellow]"
+                )
             break
         console.print("[red]Enter an IP address without spaces or cmd metacharacters.[/red]")
 
@@ -335,3 +343,21 @@ def show_summary(results: list[tuple[str, bool, str]]) -> None:
                 padding=(1, 4),
             )
         )
+
+
+_CHECK_STATUS = {
+    "ok": "[green]✓  OK[/green]",
+    "warn": "[yellow]!  Warning[/yellow]",
+    "fail": "[red]✗  Failed[/red]",
+}
+
+
+def show_check_report(items: list[CheckItem], title: str = "Health Check") -> None:
+    console.rule(f"[bold cyan]{title}[/bold cyan]")
+    table = Table(box=box.ROUNDED, border_style="cyan")
+    table.add_column("Check", style="bold white")
+    table.add_column("Status")
+    table.add_column("Details", style="dim")
+    for item in items:
+        table.add_row(item.name, _CHECK_STATUS[item.status], item.detail)
+    console.print(table)

@@ -27,6 +27,17 @@ class ServerControlError(Exception):
     pass
 
 
+def rcon_host_for(server_ip: str) -> str:
+    """
+    RCON endpoint for a server launched with `-ip server_ip`. A wildcard bind
+    answers on loopback; a specific bind (e.g. a LAN address) answers only there.
+    """
+    ip = (server_ip or "").strip()
+    if not ip or ip == "0.0.0.0":
+        return RCON_HOST
+    return ip
+
+
 class ServerController:
     def __init__(self, server_dir: Path, config: ServerConfig) -> None:
         self._server_dir = server_dir
@@ -59,7 +70,7 @@ class ServerController:
             "+exec", "server.cfg",
         ]
         if cfg.rcon_password:
-            args += ["-rcon_password", cfg.rcon_password]
+            args += ["+rcon_password", cfg.rcon_password]
         args += [
             "+sv_kick_players_with_cooldown", "0",
             "+sv_cheats", "0",
@@ -100,7 +111,7 @@ class ServerController:
             if self._proc.returncode is not None:
                 return False  # process died during boot — no point polling
             client = RCONClient(
-                RCON_HOST,
+                rcon_host_for(self._config.server_ip),
                 self._config.server_port,
                 self._config.rcon_password,
                 timeout=poll_interval,
@@ -124,7 +135,7 @@ class ServerController:
             return
 
         client = RCONClient(
-            RCON_HOST,
+            rcon_host_for(self._config.server_ip),
             self._config.server_port,
             self._config.rcon_password,
             timeout=5.0,
@@ -164,12 +175,13 @@ async def _is_port_already_serving(
     server_port: int,
     rcon_password: str,
     probe_timeout: float = 2.0,
+    host: str = RCON_HOST,
 ) -> bool:
     """
     True when a live server already answers RCON on the target port — an auth
     failure still proves the port is occupied by a running instance.
     """
-    client = RCONClient(RCON_HOST, server_port, rcon_password, timeout=probe_timeout)
+    client = RCONClient(host, server_port, rcon_password, timeout=probe_timeout)
     try:
         await client.connect()
     except RCONAuthError:
@@ -220,7 +232,10 @@ async def verify_plugin_runtime(
     runtime cannot be observed — an occupied port, a boot timeout, or missing
     logs. Only ServerControlError from launch preconditions escapes.
     """
-    if await _is_port_already_serving(config.server_port, config.rcon_password, probe_timeout):
+    if await _is_port_already_serving(
+        config.server_port, config.rcon_password, probe_timeout,
+        host=rcon_host_for(config.server_ip),
+    ):
         # A live server already owns the port; a second cs2.exe would collide.
         return LogValidationResult(success=False, plugin_name=plugin_name)
 

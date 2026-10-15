@@ -322,62 +322,128 @@ async def install_mod(
         download_url, version, commit_ref = await resolve_latest_asset_url(
             repo, asset_keyword, http_client
         )
-
-        with tempfile.TemporaryDirectory() as tmp:
-            zip_path = Path(tmp) / "asset.zip"
-
-            def _on_chunk(downloaded: int, total: int) -> None:
-                if on_progress and total > 0:
-                    pct = (downloaded / total) * 100.0
-                    on_progress(ProgressEvent(step=repo, percent=pct, message="Downloading"))
-
-            await download_asset(download_url, zip_path, http_client, _on_chunk)
-
-            if on_progress:
-                try:
-                    on_progress(ProgressEvent(step=repo, percent=100.0, message="Extracting"))
-                except Exception:
-                    pass
-
-            try:
-                with zipfile.ZipFile(zip_path) as zf:
-                    namelist = zf.namelist()
-            except zipfile.BadZipFile as exc:
-                raise UnrecognizedZipStructureError(
-                    f"Downloaded asset for '{repo}' is not a valid ZIP: {exc}"
-                ) from exc
-
-            case, wrapper_prefix = _classify_zip(namelist)
-
-            if case == ZipCase.AMBIGUOUS:
-                raise UnrecognizedZipStructureError(
-                    f"Cannot determine ZIP layout for '{repo}'.\n"
-                    f"Archive contents (first 30 entries): {namelist[:30]}\n"
-                    "Expected: 'addons/' at root, a single wrapper folder, "
-                    "or .dll files at root."
-                )
-
-            dest_dir = target_dir
-            if direct_target_dir is not None and _routes_to_addons(namelist, case, wrapper_prefix):
-                dest_dir = direct_target_dir
-
-            try:
-                files_written = _extract_zip(zip_path, dest_dir, case, wrapper_prefix)
-            except (OSError, zipfile.BadZipFile) as exc:
-                raise UnrecognizedZipStructureError(
-                    f"Failed to extract '{repo}' into {dest_dir}: {exc}"
-                ) from exc
-
-        return ModInstallResult(
-            repo=repo,
-            version=version,
-            zip_case=case,
-            files_written=files_written,
-            target_dir=str(dest_dir),
-            download_url=download_url,
-            commit_ref=commit_ref,
+        return await _install_from_url(
+            download_url, version, commit_ref, repo, target_dir,
+            http_client, on_progress, direct_target_dir,
         )
+    finally:
+        if _close_client:
+            await http_client.aclose()
 
+
+async def _install_from_url(
+    download_url: str,
+    version: str,
+    commit_ref: str,
+    repo: str,
+    target_dir: Path,
+    http_client: httpx.AsyncClient,
+    on_progress: Optional[Callable[[ProgressEvent], None]] = None,
+    direct_target_dir: Optional[Path] = None,
+) -> ModInstallResult:
+    """Download → classify → extract for an already-resolved asset URL."""
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_path = Path(tmp) / "asset.zip"
+
+        def _on_chunk(downloaded: int, total: int) -> None:
+            if on_progress and total > 0:
+                pct = (downloaded / total) * 100.0
+                on_progress(ProgressEvent(step=repo, percent=pct, message="Downloading"))
+
+        await download_asset(download_url, zip_path, http_client, _on_chunk)
+
+        if on_progress:
+            try:
+                on_progress(ProgressEvent(step=repo, percent=100.0, message="Extracting"))
+            except Exception:
+                pass
+
+        try:
+            with zipfile.ZipFile(zip_path) as zf:
+                namelist = zf.namelist()
+        except zipfile.BadZipFile as exc:
+            raise UnrecognizedZipStructureError(
+                f"Downloaded asset for '{repo}' is not a valid ZIP: {exc}"
+            ) from exc
+
+        case, wrapper_prefix = _classify_zip(namelist)
+
+        if case == ZipCase.AMBIGUOUS:
+            raise UnrecognizedZipStructureError(
+                f"Cannot determine ZIP layout for '{repo}'.\n"
+                f"Archive contents (first 30 entries): {namelist[:30]}\n"
+                "Expected: 'addons/' at root, a single wrapper folder, "
+                "or .dll files at root."
+            )
+
+        dest_dir = target_dir
+        if direct_target_dir is not None and _routes_to_addons(namelist, case, wrapper_prefix):
+            dest_dir = direct_target_dir
+
+        try:
+            files_written = _extract_zip(zip_path, dest_dir, case, wrapper_prefix)
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise UnrecognizedZipStructureError(
+                f"Failed to extract '{repo}' into {dest_dir}: {exc}"
+            ) from exc
+
+    return ModInstallResult(
+        repo=repo,
+        version=version,
+        zip_case=case,
+        files_written=files_written,
+        target_dir=str(dest_dir),
+        download_url=download_url,
+        commit_ref=commit_ref,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Metamod:Source 2.0 (CS2)
+# ---------------------------------------------------------------------------
+
+# GitHub's "latest" release of alliedmodders/metamod-source is the 1.x stable
+# branch, which only supports Source 1 games. CS2 builds (2.0 dev) are
+# published exclusively on the AlliedModders drop server.
+MMS_DROP_BASE = "https://mms.alliedmods.net/mmsdrop/2.0"
+MMS_LATEST_POINTER = f"{MMS_DROP_BASE}/mmsource-latest-windows"
+_MMS_FILENAME_RE = re.compile(r"^mmsource-(2\.\d+\.\d+-git\d+)-windows\.zip$")
+
+
+@github_retry()
+async def resolve_metamod_cs2_url(http_client: httpx.AsyncClient) -> tuple[str, str]:
+    """
+    Reads the drop server's latest-pointer file and returns
+    (download_url, version), e.g. ('.../mmsource-2.0.0-git1380-windows.zip',
+    '2.0.0-git1380').
+    """
+    response = await http_client.get(MMS_LATEST_POINTER)
+    response.raise_for_status()
+    filename = response.text.strip()
+    m = _MMS_FILENAME_RE.match(filename)
+    if not m:
+        raise InvalidRepoReferenceError(
+            f"Unexpected Metamod 2.0 pointer content from {MMS_LATEST_POINTER}: {filename[:100]!r}"
+        )
+    return f"{MMS_DROP_BASE}/{filename}", m.group(1)
+
+
+async def install_metamod_cs2(
+    target_dir: Path,
+    http_client: Optional[httpx.AsyncClient] = None,
+    on_progress: Optional[Callable[[ProgressEvent], None]] = None,
+) -> ModInstallResult:
+    """Installs the latest Metamod:Source 2.0 Windows build into target_dir (csgo/)."""
+    _close_client = False
+    if http_client is None:
+        http_client = build_async_client()
+        _close_client = True
+    try:
+        download_url, version = await resolve_metamod_cs2_url(http_client)
+        return await _install_from_url(
+            download_url, version, "", "metamod-source-2.0", target_dir,
+            http_client, on_progress,
+        )
     finally:
         if _close_client:
             await http_client.aclose()

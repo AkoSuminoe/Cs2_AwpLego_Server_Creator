@@ -140,7 +140,7 @@ def write_server_configs(
         credential_lines += f"-authkey {config.auth_key} ^\n"
     rcon_line = ""
     if config.rcon_password:
-        rcon_line = f"-rcon_password {config.rcon_password} ^\n"
+        rcon_line = f"+rcon_password {config.rcon_password} ^\n"
 
     bat_content = BAT_TEMPLATE.format(
         server_dir=str(server_dir),

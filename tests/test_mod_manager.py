@@ -17,9 +17,11 @@ from core.mod_manager import (
     UnrecognizedZipStructureError,
     _classify_zip,
     download_asset,
+    install_metamod_cs2,
     install_mod,
     parse_repo_string,
     resolve_latest_asset_url,
+    resolve_metamod_cs2_url,
 )
 from models.schemas import ZipCase
 
@@ -867,3 +869,54 @@ def test_install_mod_without_direct_target_keeps_legacy_behavior(
 
     assert (target / "addons" / "metamod" / "metaplugins.ini").exists()
     assert result.target_dir == str(target)
+
+
+# ---------------------------------------------------------------------------
+# Metamod:Source 2.0 drop server (offline)
+# ---------------------------------------------------------------------------
+
+def test_resolve_metamod_cs2_url_reads_latest_pointer() -> None:
+    def _handler(request: httpx.Request) -> httpx.Response:
+        assert str(request.url) == mod_manager.MMS_LATEST_POINTER
+        return httpx.Response(200, text="mmsource-2.0.0-git1481-windows.zip\n")
+
+    async def _run() -> tuple[str, str]:
+        async with _mock_client(_handler) as client:
+            return await resolve_metamod_cs2_url(client)
+
+    url, version = asyncio.run(_run())
+    assert url == f"{mod_manager.MMS_DROP_BASE}/mmsource-2.0.0-git1481-windows.zip"
+    assert version == "2.0.0-git1481"
+
+
+@pytest.mark.parametrize("body", ["", "<html>not found</html>", "mmsource-1.12.0-git1225-windows.zip"])
+def test_resolve_metamod_cs2_url_rejects_unexpected_pointer(body: str) -> None:
+    async def _run() -> None:
+        async with _mock_client(lambda r: httpx.Response(200, text=body)) as client:
+            await resolve_metamod_cs2_url(client)
+
+    with pytest.raises(InvalidRepoReferenceError):
+        asyncio.run(_run())
+
+
+def test_install_metamod_cs2_extracts_addons_into_csgo(tmp_path: Path) -> None:
+    import io
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("addons/metamod.vdf", b"vdf")
+        zf.writestr("addons/metamod/bin/win64/metamod.2.cs2.dll", b"dll")
+        zf.writestr("addons/metamod/bin/win64/server.dll", b"dll")
+    payload = buf.getvalue()
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == mod_manager.MMS_LATEST_POINTER:
+            return httpx.Response(200, text="mmsource-2.0.0-git1481-windows.zip")
+        return httpx.Response(200, content=payload)
+
+    async def _run():
+        async with _mock_client(_handler) as client:
+            return await install_metamod_cs2(tmp_path, http_client=client)
+
+    result = asyncio.run(_run())
+    assert result.version == "2.0.0-git1481"
+    assert (tmp_path / "addons" / "metamod" / "bin" / "win64" / "metamod.2.cs2.dll").is_file()

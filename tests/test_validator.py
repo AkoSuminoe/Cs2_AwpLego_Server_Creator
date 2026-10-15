@@ -8,6 +8,7 @@ from core.validator import (
     StateManager,
     is_cs2_installed,
     is_cssharp_installed,
+    has_stale_metamod,
     is_metamod_installed,
     is_plugin_installed,
     is_steamcmd_installed,
@@ -59,10 +60,24 @@ def test_is_cs2_installed_false_when_binary_missing(tmp_path: Path) -> None:
     assert is_cs2_installed(tmp_path) is False
 
 
-def test_is_metamod_installed_reflects_directory_presence(tmp_path: Path) -> None:
+def test_is_metamod_installed_requires_cs2_loader(tmp_path: Path) -> None:
     assert is_metamod_installed(tmp_path) is False
-    (tmp_path / "addons" / "metamod").mkdir(parents=True)
+    win64 = tmp_path / "addons" / "metamod" / "bin" / "win64"
+    win64.mkdir(parents=True)
+    (win64 / "server.dll").write_bytes(b"")
+    assert is_metamod_installed(tmp_path) is False
+    (win64 / "metamod.2.cs2.dll").write_bytes(b"")
     assert is_metamod_installed(tmp_path) is True
+
+
+def test_has_stale_metamod_flags_source1_build(tmp_path: Path) -> None:
+    assert has_stale_metamod(tmp_path) is False
+    win64 = tmp_path / "addons" / "metamod" / "bin" / "win64"
+    win64.mkdir(parents=True)
+    (win64 / "metamod.2.css.dll").write_bytes(b"")
+    assert has_stale_metamod(tmp_path) is True
+    (win64 / "metamod.2.cs2.dll").write_bytes(b"")
+    assert has_stale_metamod(tmp_path) is False
 
 
 def test_is_cssharp_installed_reflects_directory_presence(tmp_path: Path) -> None:

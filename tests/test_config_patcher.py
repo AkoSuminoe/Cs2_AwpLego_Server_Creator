@@ -343,7 +343,7 @@ def test_write_server_configs_omits_empty_credential_flags(tmp_path: Path) -> No
     bat = (server_dir / "game" / "start_server.bat").read_text(encoding="utf-8")
     assert "+sv_setsteamaccount" not in bat
     assert "-authkey" not in bat
-    assert "-rcon_password" not in bat
+    assert "+rcon_password" not in bat
     assert "-port 27015" in bat, "Positional flags must survive credential omission"
     assert "-ip 127.0.0.1" in bat
 

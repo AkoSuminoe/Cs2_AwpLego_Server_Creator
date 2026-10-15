@@ -60,6 +60,8 @@ class StateManager:
 
     def mark_complete(self, step: str, metadata: Optional[dict] = None) -> None:
         state = self.load()
+        if not state.base_dir:
+            state.base_dir = str(self._path.parent)
         entry: dict = {
             "status": "complete",
             "completed_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -95,7 +97,14 @@ def is_cs2_installed(server_dir: Path) -> bool:
 
 
 def is_metamod_installed(csgo_dir: Path) -> bool:
-    return (csgo_dir / "addons" / "metamod").is_dir()
+    # The CS2-specific loader distinguishes Metamod 2.0 from the 1.x
+    # (Source 1 only) build, which ships the same addons/metamod folder.
+    return (csgo_dir / "addons" / "metamod" / "bin" / "win64" / "metamod.2.cs2.dll").is_file()
+
+
+def has_stale_metamod(csgo_dir: Path) -> bool:
+    """True when addons/metamod exists but is not a CS2-capable (2.0) build."""
+    return (csgo_dir / "addons" / "metamod").is_dir() and not is_metamod_installed(csgo_dir)
 
 
 def is_cssharp_installed(csgo_dir: Path) -> bool:

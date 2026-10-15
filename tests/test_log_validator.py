@@ -367,3 +367,11 @@ def test_scan_latest_logs_matches_sync_scan_runtime_logs(tmp_path: Path) -> None
     async_result = asyncio.run(_run())
 
     assert async_result == direct_result
+
+
+
+def test_console_log_path_follows_metamod_write_path(tmp_path: Path) -> None:
+    from core.log_validator import console_log_path
+    assert console_log_path(tmp_path) == tmp_path / CONSOLE_LOG_NAME
+    (tmp_path / "gameinfo.gi").write_text("Game\tcsgo/addons/metamod\n", encoding="utf-8")
+    assert console_log_path(tmp_path) == tmp_path / "addons" / "metamod" / CONSOLE_LOG_NAME

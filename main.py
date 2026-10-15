@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -23,13 +24,15 @@ from cli.app import (
     collect_server_config,
     console,
     show_banner,
+    show_check_report,
     show_summary,
 )
-from core import config_patcher, mod_manager, server_controller, snapshot, steamcmd_wrapper
+from core import config_patcher, health_check, mod_manager, server_controller, snapshot, steamcmd_wrapper
 from core.lock_manager import LockFileManager
 from core.validator import (
     StateManager,
     is_cs2_installed,
+    has_stale_metamod,
     is_cssharp_installed,
     is_gameinfo_patched,
     is_metamod_installed,
@@ -56,6 +59,21 @@ def _parse_args() -> argparse.Namespace:
             "gameinfo.gi Metamod patch that Steam updates overwrite"
         ),
     )
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Inspect an existing install without changing anything",
+    )
+    p.add_argument(
+        "--live",
+        action="store_true",
+        help="With --check: boot the server, confirm Metamod + CounterStrikeSharp load, then shut down",
+    )
+    p.add_argument(
+        "--dir",
+        metavar="PATH",
+        help="Installation directory (skips the directory prompt)",
+    )
     p.add_argument(
         "--verify",
         action="store_true",
@@ -64,7 +82,119 @@ def _parse_args() -> argparse.Namespace:
             "runtime errors (auto-rollback on confirmed failure)"
         ),
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if args.live and not args.check:
+        p.error("--live requires --check")
+    return args
+
+
+def _resolve_base_dir(args: argparse.Namespace, create: bool = True) -> Path:
+    if args.dir:
+        path = Path(args.dir).expanduser().resolve()
+        if create:
+            path.mkdir(parents=True, exist_ok=True)
+        return path
+    return collect_base_dir()
+
+
+async def _run_check(base_dir: Path, live: bool) -> bool:
+    """Runs the read-only health check; returns True when nothing failed."""
+    if not base_dir.is_dir():
+        console.print(f"[red]Directory not found: {base_dir}[/red]")
+        return False
+    items = health_check.run_static_checks(base_dir)
+    show_check_report(items, f"Health Check — {base_dir}")
+    ok = not health_check.has_failures(items)
+    if not live:
+        return ok
+
+    server_dir = base_dir / "cs2_server"
+    config = health_check.parse_start_bat(server_dir / "game" / "start_server.bat")
+    if not ok:
+        console.print("[yellow]Skipping live boot: fix the failed checks first.[/yellow]")
+        return False
+    if config is None:
+        console.print("[red]Live boot needs start_server.bat — run the installer first.[/red]")
+        return False
+
+    with console.status("[cyan]Booting CS2 server for live check (up to ~3 min)…[/cyan]"):
+        live_items = await health_check.run_live_check(server_dir, config)
+    show_check_report(live_items, "Live Check")
+    return not health_check.has_failures(live_items)
+
+
+async def _ensure_metamod(
+    csgo_dir: Path,
+    client,
+    prog: InstallationProgress,
+    state: StateManager,
+    results: list[tuple[str, bool, str]],
+) -> bool:
+    """
+    Installs Metamod:Source 2.0, replacing a stale 1.x (Source 1) build if
+    present. Returns True when a stale build was replaced — any existing
+    CounterStrikeSharp was then built for a different SourceHook ABI and
+    must be refreshed too.
+    """
+    prog.start_task("metamod", "Install Metamod")
+    if is_metamod_installed(csgo_dir):
+        prog.complete_task("metamod")
+        results.append(("Metamod", True, "Already installed — skipped"))
+        return False
+    replaced = has_stale_metamod(csgo_dir)
+    try:
+        if replaced:
+            prog.note_task("metamod", "Removing incompatible Metamod 1.x build")
+            # Only the 1.x binaries go: addons/metamod/ also holds other
+            # plugins' registrations (e.g. counterstrikesharp.vdf).
+            addons = csgo_dir / "addons"
+            shutil.rmtree(addons / "metamod" / "bin")
+            for vdf in ("metamod.vdf", "metamod_x64.vdf"):
+                (addons / vdf).unlink(missing_ok=True)
+        result = await mod_manager.install_metamod_cs2(
+            target_dir=csgo_dir,
+            http_client=client,
+            on_progress=lambda e: prog.update_task("metamod", e.percent),
+        )
+        prog.complete_task("metamod")
+        state.mark_complete("metamod_installed", {"version": result.version})
+        results.append(("Metamod", True, result.version))
+    except Exception as exc:
+        prog.fail_task("metamod", str(exc))
+        results.append(("Metamod", False, str(exc)))
+        return False
+    return replaced
+
+
+async def _ensure_cssharp(
+    csgo_dir: Path,
+    client,
+    prog: InstallationProgress,
+    state: StateManager,
+    results: list[tuple[str, bool, str]],
+    force: bool = False,
+) -> None:
+    """Installs the latest CounterStrikeSharp (with .NET runtime); force refreshes it in place."""
+    prog.start_task("cssharp", "Install CounterStrikeSharp")
+    if is_cssharp_installed(csgo_dir) and not force:
+        prog.complete_task("cssharp")
+        results.append(("CounterStrikeSharp", True, "Already installed — skipped"))
+        return
+    try:
+        result = await mod_manager.install_mod(
+            repo="roflmuffin/CounterStrikeSharp",
+            target_dir=csgo_dir,
+            asset_keyword="with-runtime-windows",
+            http_client=client,
+            on_progress=lambda e: prog.update_task("cssharp", e.percent),
+        )
+        prog.complete_task("cssharp")
+        state.mark_complete("cssharp_installed", {"version": result.version})
+        detail = f"{result.version} (refreshed for Metamod 2.0)" if force else result.version
+        results.append(("CounterStrikeSharp", True, detail))
+    except Exception as exc:
+        prog.fail_task("cssharp", str(exc))
+        results.append(("CounterStrikeSharp", False, str(exc)))
 
 
 async def _restore_from_lock(
@@ -134,13 +264,23 @@ async def main() -> None:
 
     show_banner()
 
+    if args.check:
+        try:
+            base_dir = _resolve_base_dir(args, create=False)
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Check cancelled by user.[/yellow]")
+            return
+        if not await _run_check(base_dir, args.live):
+            sys.exit(1)
+        return
+
     # ----------------------------------------------------------------------
     # --update mode: refresh CS2 via SteamCMD, then re-apply the Metamod
     # hook that every Steam update silently wipes from gameinfo.gi.
     # ----------------------------------------------------------------------
     if args.update:
         try:
-            base_dir = collect_base_dir()
+            base_dir = _resolve_base_dir(args)
         except (KeyboardInterrupt, EOFError):
             console.print("\n[yellow]Update cancelled by user.[/yellow]")
             return
@@ -180,6 +320,10 @@ async def main() -> None:
                 show_summary(results)
                 return
 
+            async with build_async_client() as client:
+                if await _ensure_metamod(csgo_dir, client, prog, state, results):
+                    await _ensure_cssharp(csgo_dir, client, prog, state, results, force=True)
+
             prog.start_task("gameinfo", "Re-patch gameinfo.gi")
             if is_gameinfo_patched(csgo_dir):
                 prog.complete_task("gameinfo")
@@ -199,7 +343,7 @@ async def main() -> None:
 
     # Phase 0 — collect all user input before any async work begins
     try:
-        base_dir = collect_base_dir()
+        base_dir = _resolve_base_dir(args)
         server_config = collect_server_config()
         plugins = collect_plugins()
         effective_verify = True if args.verify else collect_runtime_verify()
@@ -278,48 +422,14 @@ async def main() -> None:
             # ------------------------------------------------------------------
             # Phase 4: Metamod
             # ------------------------------------------------------------------
-            prog.start_task("metamod", "Install Metamod")
-            if is_metamod_installed(csgo_dir):
-                prog.complete_task("metamod")
-                results.append(("Metamod", True, "Already installed — skipped"))
-            else:
-                try:
-                    result = await mod_manager.install_mod(
-                        repo="alliedmodders/metamod-source",
-                        target_dir=csgo_dir,
-                        asset_keyword="windows",
-                        http_client=client,
-                        on_progress=lambda e: prog.update_task("metamod", e.percent),
-                    )
-                    prog.complete_task("metamod")
-                    state.mark_complete("metamod_installed", {"version": result.version})
-                    results.append(("Metamod", True, result.version))
-                except Exception as exc:
-                    prog.fail_task("metamod", str(exc))
-                    results.append(("Metamod", False, str(exc)))
+            metamod_replaced = await _ensure_metamod(csgo_dir, client, prog, state, results)
 
             # ------------------------------------------------------------------
             # Phase 5: CounterStrikeSharp
             # ------------------------------------------------------------------
-            prog.start_task("cssharp", "Install CounterStrikeSharp")
-            if is_cssharp_installed(csgo_dir):
-                prog.complete_task("cssharp")
-                results.append(("CounterStrikeSharp", True, "Already installed — skipped"))
-            else:
-                try:
-                    result = await mod_manager.install_mod(
-                        repo="roflmuffin/CounterStrikeSharp",
-                        target_dir=csgo_dir,
-                        asset_keyword="with-runtime-windows",
-                        http_client=client,
-                        on_progress=lambda e: prog.update_task("cssharp", e.percent),
-                    )
-                    prog.complete_task("cssharp")
-                    state.mark_complete("cssharp_installed", {"version": result.version})
-                    results.append(("CounterStrikeSharp", True, result.version))
-                except Exception as exc:
-                    prog.fail_task("cssharp", str(exc))
-                    results.append(("CounterStrikeSharp", False, str(exc)))
+            await _ensure_cssharp(
+                csgo_dir, client, prog, state, results, force=metamod_replaced
+            )
 
             # ------------------------------------------------------------------
             # Phase 6: gameinfo.gi patch
