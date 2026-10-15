@@ -46,7 +46,8 @@ start /wait cs2.exe -dedicated -usercon -console -condebug ^
 +sv_logfile 1 -serverlogging ^
 {credential_lines}-ip {server_ip} ^
 -port {server_port} ^
-+map {map} ^
++sv_lan 0 ^
+{map_line} ^
 +exec server.cfg ^
 {rcon_line}+sv_kick_players_with_cooldown 0 ^
 +sv_cheats 0
@@ -113,6 +114,8 @@ def write_server_configs(
             ("auth_key", config.auth_key),
             ("server_ip", config.server_ip),
             ("map", config.map),
+            ("workshop_map", config.workshop_map),
+            ("workshop_collection", config.workshop_collection),
             ("rcon_password", config.rcon_password),
         )
         if value and not is_safe_batch_value(value)
@@ -147,7 +150,7 @@ def write_server_configs(
         credential_lines=credential_lines,
         server_ip=config.server_ip,
         server_port=config.server_port,
-        map=config.map,
+        map_line=" ".join(config.map_args()),
         rcon_line=rcon_line,
     )
     try:

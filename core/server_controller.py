@@ -9,6 +9,8 @@ results — only a confirmed error signature in the logs justifies a rollback.
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
 from typing import Literal, Optional, Sequence
 
@@ -39,9 +41,14 @@ def rcon_host_for(server_ip: str) -> str:
 
 
 class ServerController:
-    def __init__(self, server_dir: Path, config: ServerConfig) -> None:
+    def __init__(
+        self, server_dir: Path, config: ServerConfig, visible_console: bool = False
+    ) -> None:
         self._server_dir = server_dir
         self._config = config
+        # Supervised (24/7) servers get their own console window so the
+        # operator can watch and type into it; verification runs stay hidden.
+        self._visible_console = visible_console
         self._proc: Optional[asyncio.subprocess.Process] = None
 
     @property
@@ -66,7 +73,8 @@ class ServerController:
         args += [
             "-ip", cfg.server_ip,
             "-port", str(cfg.server_port),
-            "+map", cfg.map,
+            "+sv_lan", "0",
+            *cfg.map_args(),
             "+exec", "server.cfg",
         ]
         if cfg.rcon_password:
@@ -83,13 +91,16 @@ class ServerController:
         exe_path = self._server_dir / CS2_EXE_RELATIVE
         if not exe_path.exists():
             raise ServerControlError(f"cs2.exe not found at {exe_path}")
+        if self._visible_console and sys.platform == "win32":
+            stdio: dict = {"creationflags": subprocess.CREATE_NEW_CONSOLE}
+        else:
+            stdio = {"stdout": asyncio.subprocess.DEVNULL, "stderr": asyncio.subprocess.DEVNULL}
         try:
             self._proc = await asyncio.create_subprocess_exec(
                 str(exe_path),
                 *self._build_launch_args(),
                 cwd=str(exe_path.parent),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
+                **stdio,
             )
         except OSError as exc:
             raise ServerControlError(f"Failed to launch cs2.exe: {exc}") from exc

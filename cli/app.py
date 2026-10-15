@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -68,6 +69,34 @@ def collect_base_dir() -> Path:
             console.print(f"[red]Cannot write to {path}: {exc}. Try another path.[/red]")
 
 
+_WORKSHOP_URL_RE = re.compile(r"steamcommunity\.com/(?:sharedfiles|workshop)/filedetails/\?(?:.*&)?id=(\d+)")
+
+
+def parse_map_input(raw: str) -> Optional[tuple[str, str, str]]:
+    """
+    'de_mirage'                    → ('de_mirage', '', '')
+    '3070244462' / Workshop URL    → ('de_dust2', '3070244462', '')
+    'c:3086555291' / 'collection:…' → ('de_dust2', '', '3086555291')
+    Returns None for anything unsafe or malformed.
+    """
+    value = raw.strip()
+    lower = value.lower()
+    for prefix in ("c:", "collection:"):
+        if lower.startswith(prefix):
+            rest = value[len(prefix):].strip()
+            m = _WORKSHOP_URL_RE.search(rest)
+            ident = m.group(1) if m else rest
+            return ("de_dust2", "", ident) if ident.isdigit() else None
+    m = _WORKSHOP_URL_RE.search(value)
+    if m:
+        return "de_dust2", m.group(1), ""
+    if value.isdigit():
+        return "de_dust2", value, ""
+    if value and is_safe_batch_value(value):
+        return value, "", ""
+    return None
+
+
 def collect_server_config() -> ServerConfig:
     console.rule("[bold cyan]Server Configuration[/bold cyan]")
     console.print(
@@ -117,10 +146,19 @@ def collect_server_config() -> ServerConfig:
         console.print("[red]Port must be between 1024 and 65535.[/red]")
 
     while True:
-        server_map = Prompt.ask("[bold]Default map[/bold]", default="de_dust2", console=console).strip()
-        if server_map and is_safe_batch_value(server_map):
+        raw_map = Prompt.ask(
+            "[bold]Default map[/bold] [dim](name, Workshop ID/URL, or c:<collection id>)[/dim]",
+            default="de_dust2", console=console,
+        ).strip()
+        parsed = parse_map_input(raw_map)
+        if parsed is not None:
+            server_map, workshop_map, workshop_collection = parsed
             break
-        console.print("[red]Map names cannot contain spaces or cmd metacharacters.[/red]")
+        console.print("[red]Enter a map name, a Workshop ID/URL, or c:<collection id>.[/red]")
+    if (workshop_map or workshop_collection) and not auth_key:
+        console.print(
+            "[yellow]Workshop maps need a Steam Web API key (-authkey) to download.[/yellow]"
+        )
 
     while True:
         rcon_password = Prompt.ask("[bold]RCON password[/bold]", console=console)
@@ -161,6 +199,8 @@ def collect_server_config() -> ServerConfig:
         auth_key=auth_key,
         server_ip=server_ip,
         map=server_map,
+        workshop_map=workshop_map,
+        workshop_collection=workshop_collection,
         rcon_password=rcon_password,
         server_port=server_port,
         db_config=db_config,

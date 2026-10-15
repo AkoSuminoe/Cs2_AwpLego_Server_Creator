@@ -34,3 +34,13 @@ def test_later_successful_boot_clears_earlier_failure() -> None:
     )
     loaded, failed = plugin_load_results(log)
     assert "weaponpaints" in loaded and "WeaponPaints" not in failed
+
+
+def test_folder_names_with_spaces_and_brackets() -> None:
+    """ABKAM2023/CS2-LevelsRanks-Core installs as plugins/[LR] Core/."""
+    log = (
+        "2026-10-15 14:57:55 [INFO] (cssharp:PluginContext) Loading plugin [LR] Core\n"
+        "2026-10-15 14:57:55 [INFO] (cssharp:PluginContext) Finished loading plugin [LevelsRanks] Core\n"
+    )
+    loaded, failed = plugin_load_results(log)
+    assert loaded == {"[lr] core"} and not failed

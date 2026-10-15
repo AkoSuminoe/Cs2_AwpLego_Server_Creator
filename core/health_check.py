@@ -83,6 +83,8 @@ def parse_start_bat(bat_path: Path) -> Optional[ServerConfig]:
         auth_key=_value("-authkey"),
         server_ip=_value("-ip"),
         map=_value("+map") or "de_dust2",
+        workshop_map=_value("+host_workshop_map"),
+        workshop_collection=_value("+host_workshop_collection"),
         rcon_password=_value("+rcon_password", "-rcon_password"),
         server_port=port,
     )
@@ -225,7 +227,8 @@ def _installed_plugin_names(csgo_dir: Path) -> list[str]:
         return []
 
 
-_LOADING_RE = re.compile(r"Loading plugin (\S+)")
+# Folder names may contain spaces/brackets, e.g. "[LR] Core".
+_LOADING_RE = re.compile(r"Loading plugin (.+?)\s*$")
 _FAILED_FROM_RE = re.compile(r"Failed to load plugin from .*?[\\/]plugins[\\/]([^\\/]+)[\\/]", re.IGNORECASE)
 _EXC_MSG_RE = re.compile(r"\w+Exception: (.+)")
 _WRAPPER_EXC = "Exception has been thrown by the target of an invocation"

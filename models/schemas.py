@@ -53,6 +53,19 @@ class ServerConfig:
     rcon_password: str = ""
     server_port: int = 27015
     db_config: Optional[DatabaseConfig] = None
+    workshop_map: str = ""         # Steam Workshop file id → +host_workshop_map
+    workshop_collection: str = ""  # collection id → +host_workshop_collection
+
+    def map_args(self) -> list[str]:
+        """Launch args selecting the start map (workshop takes precedence)."""
+        if self.workshop_collection:
+            args = ["+host_workshop_collection", self.workshop_collection]
+            if self.workshop_map:
+                args += ["+host_workshop_map", self.workshop_map]
+            return args
+        if self.workshop_map:
+            return ["+host_workshop_map", self.workshop_map]
+        return ["+map", self.map]
 
 
 @dataclass
