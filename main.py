@@ -26,6 +26,7 @@ from cli.app import (
     show_banner,
     show_check_report,
     show_summary,
+    validate_plugin_input,
 )
 from core import config_patcher, health_check, mod_manager, server_controller, snapshot, steamcmd_wrapper
 from core.lock_manager import LockFileManager
@@ -39,7 +40,7 @@ from core.validator import (
     is_plugin_installed,
     is_steamcmd_installed,
 )
-from models.schemas import PluginLockEntry
+from models.schemas import PluginLockEntry, PluginRef, ServerConfig
 from utils.http_client import build_async_client
 
 
@@ -57,6 +58,15 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Update an existing CS2 server via SteamCMD and re-apply the "
             "gameinfo.gi Metamod patch that Steam updates overwrite"
+        ),
+    )
+    mode.add_argument(
+        "--add-plugin",
+        action="append",
+        metavar="SOURCE",
+        help=(
+            "Install a plugin into an existing server: owner/repo, a GitHub URL, "
+            "or a local folder/.zip (repeatable)"
         ),
     )
     mode.add_argument(
@@ -121,6 +131,50 @@ async def _run_check(base_dir: Path, live: bool) -> bool:
         live_items = await health_check.run_live_check(server_dir, config)
     show_check_report(live_items, "Live Check")
     return not health_check.has_failures(live_items)
+
+
+async def _run_add_plugins(base_dir: Path, sources: list[str], verify: bool) -> bool:
+    """Installs plugins into an existing server without the setup prompts."""
+    server_dir = base_dir / "cs2_server"
+    csgo_dir = server_dir / "game" / "csgo"
+    if not is_cssharp_installed(csgo_dir):
+        console.print(
+            f"[red]CounterStrikeSharp not found under {csgo_dir} — "
+            "run the installer first.[/red]"
+        )
+        return False
+
+    refs = [validate_plugin_input(src) for src in sources]
+    if any(ref is None for ref in refs):
+        return False
+
+    verify_config: Optional[ServerConfig] = None
+    if verify:
+        verify_config = health_check.parse_start_bat(server_dir / "game" / "start_server.bat")
+        if verify_config is None:
+            console.print("[yellow]No start_server.bat — skipping runtime verification.[/yellow]")
+
+    state = StateManager(base_dir / "install_state.json")
+    lock_mgr = LockFileManager(base_dir / "cs2-plugins.lock")
+    results: list[tuple[str, bool, str]] = []
+    async with build_async_client() as client:
+        with InstallationProgress() as prog:
+            for ref in refs:
+                await _install_plugin(
+                    ref,
+                    server_dir=server_dir,
+                    csgo_dir=csgo_dir,
+                    plugins_dir=csgo_dir / "addons" / "counterstrikesharp" / "plugins",
+                    snapshot_dir=base_dir / ".snapshots",
+                    client=client,
+                    prog=prog,
+                    state=state,
+                    lock_mgr=lock_mgr,
+                    results=results,
+                    verify_config=verify_config,
+                )
+    show_summary(results)
+    return all(ok for _, ok, _ in results)
 
 
 async def _ensure_metamod(
@@ -197,6 +251,154 @@ async def _ensure_cssharp(
         results.append(("CounterStrikeSharp", False, str(exc)))
 
 
+async def _install_plugin(
+    plugin: PluginRef,
+    *,
+    server_dir: Path,
+    csgo_dir: Path,
+    plugins_dir: Path,
+    snapshot_dir: Path,
+    client,
+    prog: InstallationProgress,
+    state: StateManager,
+    lock_mgr: LockFileManager,
+    results: list[tuple[str, bool, str]],
+    verify_config: Optional[ServerConfig] = None,
+) -> None:
+    """
+    Snapshot → install (GitHub release or local folder/zip) → optional
+    runtime verification with rollback → lock entry. Appends one result row.
+    """
+    key = f"plugin_{plugin.repo}"
+    prog.start_task(key, f"Plugin: {plugin.display_name}")
+
+    # Lock entry covers DIRECT-routed plugins whose files live
+    # outside plugins/<repo>; the directory probe covers the rest.
+    locked = lock_mgr.get(plugin.full_ref) is not None
+    present = is_plugin_installed(plugins_dir, plugin.repo)
+    if locked or present:
+        prog.complete_task(key)
+        detail = "Already installed — skipped"
+        if locked and not present:
+            # Lock says installed but no files under plugins/ —
+            # either DIRECT-routed content or a manual delete.
+            detail = (
+                "In lock file — skipped (no files under plugins/; "
+                "run --restore to reinstall)"
+            )
+        results.append((f"Plugin: {plugin.display_name}", True, detail))
+        return
+
+    snap: Optional[snapshot.SnapshotMeta] = None
+    try:
+        snap = snapshot.take_snapshot(
+            csgo_dir, snapshot_dir, label=f"before_{plugin.repo}"
+        )
+        snapshot.cleanup_old_snapshots(snapshot_dir)
+    except snapshot.SnapshotError:
+        pass
+
+    try:
+        if plugin.local_path:
+            result = mod_manager.install_local(
+                Path(plugin.local_path),
+                target_dir=plugins_dir / plugin.repo,
+                direct_target_dir=csgo_dir,
+            )
+        else:
+            result = await mod_manager.install_mod(
+                repo=plugin.full_ref,
+                target_dir=plugins_dir / plugin.repo,
+                http_client=client,
+                on_progress=lambda e, k=key: prog.update_task(k, e.percent),
+                direct_target_dir=csgo_dir,
+            )
+
+        if verify_config is not None and is_cs2_installed(server_dir):
+            if not verify_config.rcon_password:
+                console.print(
+                    "[yellow]  RCON password empty — skipping runtime verification.[/yellow]"
+                )
+            else:
+                console.print(
+                    f"[cyan]  Verifying {plugin.display_name} at runtime...[/cyan]"
+                )
+                result_v = await server_controller.verify_plugin_runtime(
+                    server_dir, csgo_dir, verify_config, plugin.repo,
+                )
+                outcome = server_controller.classify_verification_outcome(result_v)
+                if outcome == "rolled_back":
+                    if snap:
+                        try:
+                            await server_controller.rollback_with_retry(snap, csgo_dir)
+                            console.print(
+                                f"[yellow]  Rolled back to snapshot {snap.snapshot_id}[/yellow]"
+                            )
+                        except snapshot.SnapshotError as rb_exc:
+                            console.print(f"[red]  Rollback failed: {rb_exc}[/red]")
+                    state.mark_failed(
+                        f"plugin:{plugin.full_ref}",
+                        "Runtime verification detected errors: "
+                        + "; ".join(result_v.errors_detected[:3]),
+                    )
+                    prog.fail_task(
+                        key,
+                        f"Runtime verification failed for {plugin.display_name}. "
+                        "Auto-rollback executed.",
+                    )
+                    results.append(
+                        (
+                            f"Plugin: {plugin.display_name}",
+                            False,
+                            "Runtime verification failed — auto-rollback executed",
+                        )
+                    )
+                    return
+                if outcome == "inconclusive":
+                    console.print(
+                        f"[yellow]  Runtime verification inconclusive for "
+                        f"{plugin.display_name} — keeping install; check manually.[/yellow]"
+                    )
+                else:
+                    console.print(
+                        f"[green]  Runtime verification passed for {plugin.display_name}.[/green]"
+                    )
+
+        prog.complete_task(key)
+        state.mark_complete(
+            f"plugin:{plugin.full_ref}", {"version": result.version}
+        )
+        if plugin.local_path:
+            # A local archive has no URL to pin — it can't be --restore'd.
+            results.append((f"Plugin: {plugin.display_name}", True, "Local — not in lock file"))
+            return
+        lock_mgr.record(
+            PluginLockEntry(
+                owner=plugin.owner,
+                repo=plugin.repo,
+                version=result.version,
+                commit_ref=result.commit_ref,
+                download_url=result.download_url,
+                asset_keyword=None,
+                installed_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
+            )
+        )
+        results.append(
+            (f"Plugin: {plugin.display_name}", True, result.version)
+        )
+    except Exception as exc:
+        if snap:
+            try:
+                snapshot.rollback(snap, csgo_dir)
+                console.print(
+                    f"[yellow]  Rolled back to snapshot {snap.snapshot_id}[/yellow]"
+                )
+            except snapshot.SnapshotError as rb_exc:
+                console.print(f"[red]  Rollback failed: {rb_exc}[/red]")
+        prog.fail_task(key, str(exc))
+        results.append((f"Plugin: {plugin.display_name}", False, str(exc)))
+
+
 async def _restore_from_lock(
     plugins_dir: Path,
     csgo_dir: Path,
@@ -263,6 +465,16 @@ async def main() -> None:
         return
 
     show_banner()
+
+    if args.add_plugin:
+        try:
+            base_dir = _resolve_base_dir(args, create=False)
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[yellow]Cancelled by user.[/yellow]")
+            return
+        if not await _run_add_plugins(base_dir, args.add_plugin, args.verify):
+            sys.exit(1)
+        return
 
     if args.check:
         try:
@@ -484,131 +696,25 @@ async def main() -> None:
             # Phase 8: user-defined plugins
             # ------------------------------------------------------------------
             for plugin in plugins:
-                key = f"plugin_{plugin.repo}"
-                prog.start_task(key, f"Plugin: {plugin.display_name}")
-
-                # Lock entry covers DIRECT-routed plugins whose files live
-                # outside plugins/<repo>; the directory probe covers the rest.
-                locked = lock_mgr.get(plugin.full_ref) is not None
-                present = is_plugin_installed(plugins_dir, plugin.repo)
-                if locked or present:
-                    prog.complete_task(key)
-                    detail = "Already installed — skipped"
-                    if locked and not present:
-                        # Lock says installed but no files under plugins/ —
-                        # either DIRECT-routed content or a manual delete.
-                        detail = (
-                            "In lock file — skipped (no files under plugins/; "
-                            "run --restore to reinstall)"
-                        )
-                    results.append((f"Plugin: {plugin.display_name}", True, detail))
-                    continue
-
-                snap: Optional[snapshot.SnapshotMeta] = None
-                try:
-                    snap = snapshot.take_snapshot(
-                        csgo_dir, snapshot_dir, label=f"before_{plugin.repo}"
-                    )
-                    snapshot.cleanup_old_snapshots(snapshot_dir)
-                except snapshot.SnapshotError:
-                    pass
-
-                try:
-                    result = await mod_manager.install_mod(
-                        repo=plugin.full_ref,
-                        target_dir=plugins_dir / plugin.repo,
-                        http_client=client,
-                        on_progress=lambda e, k=key: prog.update_task(k, e.percent),
-                        direct_target_dir=csgo_dir,
-                    )
-
-                    if effective_verify and is_cs2_installed(server_dir):
-                        if not server_config.rcon_password:
-                            console.print(
-                                "[yellow]  RCON password empty — skipping runtime verification.[/yellow]"
-                            )
-                        else:
-                            console.print(
-                                f"[cyan]  Verifying {plugin.display_name} at runtime...[/cyan]"
-                            )
-                            result_v = await server_controller.verify_plugin_runtime(
-                                server_dir, csgo_dir, server_config, plugin.repo,
-                            )
-                            outcome = server_controller.classify_verification_outcome(result_v)
-                            if outcome == "rolled_back":
-                                if snap:
-                                    try:
-                                        await server_controller.rollback_with_retry(snap, csgo_dir)
-                                        console.print(
-                                            f"[yellow]  Rolled back to snapshot {snap.snapshot_id}[/yellow]"
-                                        )
-                                    except snapshot.SnapshotError as rb_exc:
-                                        console.print(f"[red]  Rollback failed: {rb_exc}[/red]")
-                                state.mark_failed(
-                                    f"plugin:{plugin.full_ref}",
-                                    "Runtime verification detected errors: "
-                                    + "; ".join(result_v.errors_detected[:3]),
-                                )
-                                prog.fail_task(
-                                    key,
-                                    f"Runtime verification failed for {plugin.display_name}. "
-                                    "Auto-rollback executed.",
-                                )
-                                results.append(
-                                    (
-                                        f"Plugin: {plugin.display_name}",
-                                        False,
-                                        "Runtime verification failed — auto-rollback executed",
-                                    )
-                                )
-                                continue
-                            if outcome == "inconclusive":
-                                console.print(
-                                    f"[yellow]  Runtime verification inconclusive for "
-                                    f"{plugin.display_name} — keeping install; check manually.[/yellow]"
-                                )
-                            else:
-                                console.print(
-                                    f"[green]  Runtime verification passed for {plugin.display_name}.[/green]"
-                                )
-
-                    prog.complete_task(key)
-                    state.mark_complete(
-                        f"plugin:{plugin.full_ref}", {"version": result.version}
-                    )
-                    lock_mgr.record(
-                        PluginLockEntry(
-                            owner=plugin.owner,
-                            repo=plugin.repo,
-                            version=result.version,
-                            commit_ref=result.commit_ref,
-                            download_url=result.download_url,
-                            asset_keyword=None,
-                            installed_at=datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
-                        )
-                    )
-                    results.append(
-                        (f"Plugin: {plugin.display_name}", True, result.version)
-                    )
-                except Exception as exc:
-                    if snap:
-                        try:
-                            snapshot.rollback(snap, csgo_dir)
-                            console.print(
-                                f"[yellow]  Rolled back to snapshot {snap.snapshot_id}[/yellow]"
-                            )
-                        except snapshot.SnapshotError as rb_exc:
-                            console.print(f"[red]  Rollback failed: {rb_exc}[/red]")
-                    prog.fail_task(key, str(exc))
-                    results.append((f"Plugin: {plugin.display_name}", False, str(exc)))
+                await _install_plugin(
+                    plugin,
+                    server_dir=server_dir,
+                    csgo_dir=csgo_dir,
+                    plugins_dir=plugins_dir,
+                    snapshot_dir=snapshot_dir,
+                    client=client,
+                    prog=prog,
+                    state=state,
+                    lock_mgr=lock_mgr,
+                    results=results,
+                    verify_config=server_config if effective_verify else None,
+                )
 
     # Phase 9 — summary
     show_summary(results)
 
 
 if __name__ == "__main__":
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

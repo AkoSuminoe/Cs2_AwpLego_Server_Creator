@@ -214,6 +214,26 @@ def _read_console_since(csgo_dir: Path, offset: int) -> str:
         return ""
 
 
+def _installed_plugin_names(csgo_dir: Path) -> list[str]:
+    plugins_dir = csgo_dir / "addons" / "counterstrikesharp" / "plugins"
+    try:
+        return sorted(
+            d.name for d in plugins_dir.iterdir()
+            if d.is_dir() and d.name.lower() != "disabled" and any(d.glob("*.dll"))
+        )
+    except OSError:
+        return []
+
+
+def _plugin_loaded(name: str, text: str) -> bool:
+    """CSSharp logs 'Finished loading plugin <Name>'; css_plugins list quotes the module name."""
+    pattern = re.compile(
+        rf"Finished loading plugin {re.escape(name)}\b|\[#\d+:LOADED\][^\n]*{re.escape(name)}",
+        re.IGNORECASE,
+    )
+    return bool(pattern.search(text))
+
+
 def _read_cssharp_logs_since(csgo_dir: Path, since_epoch: float) -> str:
     """Text of CSSharp's own log files touched during this boot."""
     logs_dir = csgo_dir / "addons" / "counterstrikesharp" / "logs"
@@ -306,10 +326,22 @@ async def run_live_check(
         items.append(CheckItem("Metamod (runtime)", "fail", "Not loaded — 'meta version' unknown"))
 
     loaded = len(_CSS_LOADED_RE.findall(css_out))
+    installed = _installed_plugin_names(csgo_dir)
+    not_loaded = [n for n in installed if not _plugin_loaded(n, combined)]
     css_answered = bool(css_out.strip()) and "unknown command" not in css_out.lower()
     if loaded or css_answered or _CSS_BOOT_RE.search(combined):
         detail = f"Loaded, {loaded} plugin(s) reported LOADED" if loaded else "Loaded (no plugins listed)"
         items.append(CheckItem("CounterStrikeSharp (runtime)", "ok", detail))
+        if installed:
+            if not_loaded:
+                items.append(CheckItem(
+                    "Plugins (runtime)", "fail",
+                    f"Installed but not loaded: {', '.join(not_loaded)}",
+                ))
+            else:
+                items.append(CheckItem(
+                    "Plugins (runtime)", "ok", f"All loaded: {', '.join(installed)}"
+                ))
     elif _SOURCEHOOK_MISMATCH_RE.search(combined):
         items.append(CheckItem(
             "CounterStrikeSharp (runtime)", "fail",

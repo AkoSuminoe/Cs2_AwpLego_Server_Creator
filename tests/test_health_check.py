@@ -341,3 +341,29 @@ def test_live_check_accepts_cssharp_own_log(tmp_path: Path, live_env) -> None:
     }))
     item = _by_name(_run(tmp_path, _config()))["CounterStrikeSharp (runtime)"]
     assert item.status == "ok"
+
+
+def test_live_check_names_installed_plugins_that_did_not_load(tmp_path: Path, live_env) -> None:
+    plugins = tmp_path / "game" / "csgo" / "addons" / "counterstrikesharp" / "plugins"
+    for name in ("BotHiderImpl", "CS2-Bot-Randomizer"):
+        (plugins / name).mkdir(parents=True)
+        (plugins / name / "x.dll").write_bytes(b"")
+    logs = tmp_path / "game" / "csgo" / "addons" / "counterstrikesharp" / "logs"
+    logs.mkdir(parents=True)
+
+    class _WritingController(_FakeController):
+        async def start(self) -> None:
+            (logs / "log-cssharp20261015.txt").write_text(
+                "CounterStrikeSharp is starting up...\n"
+                "(cssharp:PluginContext) Finished loading plugin BotHiderImpl\n",
+                encoding="utf-8",
+            )
+
+    live_env.setattr(health_check, "ServerController", _WritingController)
+    live_env.setattr(health_check, "RCONClient", _fake_rcon({
+        "meta version": "Metamod:Source version 2.0.0-dev+1481",
+        "css_plugins list": '[#1:LOADED]: "Bot Hider" (0.5.1)',
+    }))
+    item = _by_name(_run(tmp_path, _config()))["Plugins (runtime)"]
+    assert item.status == "fail"
+    assert "CS2-Bot-Randomizer" in item.detail and "BotHiderImpl" not in item.detail
